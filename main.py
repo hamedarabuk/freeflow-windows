@@ -28,10 +28,12 @@ import keyboard
 
 from config import load_config
 from cleanup import clean
+from dictionary import apply_substitutions
 from history import append, last_ten, log_dir
 from paste import paste_text
 from recorder import Recorder
 from router import pick_mode, _get_foreground_info
+from snippets import expand_snippet
 from transcribe import transcribe
 from tray import TrayIcon
 from overlay import Overlay, load_state as _load_overlay_state
@@ -302,10 +304,52 @@ def _dispatch(wav_path: Path) -> None:
     t_transcribe_end = time.monotonic()
     ms_transcribe = int((t_transcribe_end - t_rec_end) * 1000)
 
+    # Snippet shortcut: if the transcribed text (already with dictionary
+    # substitutions applied inside transcribe()) matches a snippet cue
+    # exactly, paste the expansion and skip LLM cleanup entirely.
+    snippet_expansion = expand_snippet(text_raw)
+    if snippet_expansion is not None:
+        ms_total_snippet = int((time.monotonic() - t_start) * 1000)
+        try:
+            append(
+                mode_auto=mode_auto,
+                mode_forced=mode_forced,
+                language=language,
+                transcript_raw=text_raw,
+                transcript_clean=snippet_expansion,
+                app_process=process_name,
+                app_title=window_title,
+                ms_record=ms_record,
+                ms_transcribe=ms_transcribe,
+                ms_cleanup=0,
+                ms_total=ms_total_snippet,
+                fallback=False,
+            )
+        except Exception as exc:
+            log.warning("History append failed: %s", exc)
+        paste_text(snippet_expansion)
+        log.info(
+            "Dispatched snippet expansion (skipped cleanup) %dms total",
+            ms_total_snippet,
+        )
+        if _tray:
+            _tray.set_idle()
+        if _overlay:
+            _overlay.set_state("idle")
+        return
+
     text_clean, fallback = clean(
         text_raw, effective_mode, _cfg.groq_api_key,
         translate_to_english=translate_flag,
     )
+
+    # Re-apply dictionary substitutions to undo any paraphrasing by the
+    # cleanup LLM. transcribe() applies them once before cleanup; this
+    # second pass locks them in after cleanup. Skipped when translating
+    # because the cleanup output is in a different language to the
+    # dictionary keys.
+    if not translate_flag:
+        text_clean = apply_substitutions(text_clean)
 
     t_cleanup_end = time.monotonic()
     ms_cleanup = int((t_cleanup_end - t_transcribe_end) * 1000)
