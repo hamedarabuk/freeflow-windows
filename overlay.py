@@ -65,10 +65,18 @@ FONT_FAMILY = "Segoe UI Variable"
 _STATE_FILE = Path(__file__).parent / ".overlay-state.json"
 
 _W = 280
-_H = 122       # includes the 14px grip bar at the top
+_H = 132       # includes the 14px grip bar at the top
 _GRIP_H = 14
 _MARGIN_RIGHT  = 24
 _MARGIN_BOTTOM = 48
+
+# Mic toggle: round button, prominent in the bottom row.
+_MIC_SIZE = 36     # square frame, corner_radius=half makes it a circle
+_MIC_GLYPH_FONT = 18
+
+# Mode pill: compact (the mode menu is read once per app, not interacted with often).
+_MODE_PILL_H = 30
+_MODE_PILL_FONT = 12
 
 # Equaliser
 _EQ_BARS = 7
@@ -290,14 +298,16 @@ class Overlay:
         )  # packed/forgotten by _refresh
 
         # --- Middle row: mode pill button ---
+        # Compact: the mode menu is configuration the user reads occasionally,
+        # not the primary interaction. The mic button gets the visual weight.
         self._mode_button = ctk.CTkButton(
             outer,
             text="AUTO · POLISHED  ▾",
             fg_color=BG_PILL, hover_color=BG_PILL_HOVER,
             text_color=FG_PRIMARY,
-            font=(FONT_FAMILY, 14, "bold"),
+            font=(FONT_FAMILY, _MODE_PILL_FONT, "bold"),
             corner_radius=8,
-            height=38,
+            height=_MODE_PILL_H,
             command=self._toggle_menu,
         )
         self._mode_button.pack(fill="x", padx=10, pady=(6, 0))
@@ -324,18 +334,22 @@ class Overlay:
         self._pause_button.pack(side="right")
 
         # Mic toggle: one-click entry/exit into session mode (no Alt+1
-        # double-tap needed). Active state shows a red filled mic; idle
-        # shows a faint outline. Sits left of the pause icon.
+        # double-tap needed). Round button (corner_radius = half the
+        # height makes a perfect circle). Idle = grey outline; active =
+        # red filled disc. Sits left of the pause icon and is the
+        # largest interactive control on the gadget.
         self._mic_button = ctk.CTkButton(
             bottom, text="◉",
             fg_color="transparent", hover_color=BG_MENU_HOVER,
             text_color=FG_SECONDARY,
-            font=(FONT_FAMILY, 13, "bold"),
-            width=22, height=22,
-            corner_radius=4,
+            font=(FONT_FAMILY, _MIC_GLYPH_FONT, "bold"),
+            width=_MIC_SIZE, height=_MIC_SIZE,
+            corner_radius=_MIC_SIZE // 2,
+            border_width=2,
+            border_color=FG_SECONDARY,
             command=self._on_mic_clicked,
         )
-        self._mic_button.pack(side="right", padx=(0, 4))
+        self._mic_button.pack(side="right", padx=(0, 6))
 
         self._translate_badge = ctk.CTkLabel(
             bottom, text="⇄ EN",
@@ -428,8 +442,9 @@ class Overlay:
         # Pause glyph
         self._pause_button.configure(text="▶" if self._paused else "⏸")
 
-        # Mic button: shows the current session state. Active = red filled
-        # circle on a red panel; idle = grey outline.
+        # Mic button: shows the current session state. Active = solid
+        # red disc with no border; idle = grey outlined ring (visible
+        # against the dark gadget background).
         session_on = False
         try:
             session_on = bool(self._get_session_active())
@@ -441,6 +456,7 @@ class Overlay:
                 fg_color=STATE_COLOURS["recording"],
                 text_color=FG_PRIMARY,
                 hover_color="#dc2626",
+                border_width=0,
             )
         else:
             self._mic_button.configure(
@@ -448,6 +464,8 @@ class Overlay:
                 fg_color="transparent",
                 text_color=FG_SECONDARY,
                 hover_color=BG_MENU_HOVER,
+                border_width=2,
+                border_color=FG_SECONDARY,
             )
 
     def _poll_mode(self) -> None:
