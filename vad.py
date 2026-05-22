@@ -42,7 +42,7 @@ FRAME_BYTES = FRAME_SAMPLES * 2                                # 640 (int16)
 VAD_AGGRESSIVENESS    = 2     # 0..3; 2 is a good speech/noise balance
 SPEECH_FRAMES_TO_START = 15   # 300ms of speech to confirm burst start
 SILENCE_FRAMES_TO_END  = 75   # 1500ms of silence to end burst
-PRE_ROLL_FRAMES        = 10   # 200ms pre-roll prepended to burst
+PRE_ROLL_FRAMES        = 25   # 500ms pre-roll, covers the 300ms speech-detect window so the burst onset is not clipped
 MIN_BURST_FRAMES       = 25   # 500ms minimum (skip pops + half-words)
 MAX_BURST_FRAMES       = 1500 # 30s max before force-flush
 

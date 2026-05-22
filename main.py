@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
 import sys
 import threading
 import time
@@ -80,6 +81,15 @@ _press_start_time: float = 0.0
 _last_tap_release_time: float = 0.0
 _DOUBLE_TAP_WINDOW_MS = 400
 _SHORT_TAP_MAX_MS = 250
+
+# Session-mode burst dispatch queue. Bursts arrive from the VAD audio thread
+# and must be processed strictly in order: parallel dispatches race on the
+# shared clipboard (paste_text uses pyperclip.copy + keyboard.send Ctrl+V,
+# and a second copy clobbers the first before its paste fires, producing
+# garbled output). A single worker thread drains the queue.
+_session_dispatch_queue: "queue.Queue[Optional[Path]]" = queue.Queue()
+_session_worker: Optional[threading.Thread] = None
+_session_worker_stop = threading.Event()
 
 
 def _restore_persisted_state() -> None:
@@ -203,9 +213,49 @@ def _on_show_gadget() -> None:
 
 
 def _on_session_burst(wav_path: Path) -> None:
-    """SessionManager calls this for each finalised speech burst.
-    Run dispatch in a worker thread so the audio callback isn't blocked."""
-    threading.Thread(target=_dispatch, args=(wav_path,), daemon=True).start()
+    """SessionManager calls this from the audio thread for each finalised
+    speech burst. Enqueue and return immediately; a single worker thread
+    drains the queue so dispatches stay strictly serial and the audio
+    callback is never blocked."""
+    _session_dispatch_queue.put(wav_path)
+
+
+def _session_worker_loop() -> None:
+    """Drain the session dispatch queue strictly in order. Sentinel value
+    None tells the worker to exit."""
+    while not _session_worker_stop.is_set():
+        try:
+            wav_path = _session_dispatch_queue.get(timeout=0.5)
+        except queue.Empty:
+            continue
+        if wav_path is None:
+            return
+        try:
+            _dispatch(wav_path)
+        except Exception as exc:
+            log.exception("Session burst dispatch failed: %s", exc)
+
+
+def _start_session_worker() -> None:
+    global _session_worker
+    if _session_worker is not None and _session_worker.is_alive():
+        return
+    # Drain any leftover items from a previous session before restart.
+    while not _session_dispatch_queue.empty():
+        try:
+            _session_dispatch_queue.get_nowait()
+        except queue.Empty:
+            break
+    _session_worker_stop.clear()
+    _session_worker = threading.Thread(
+        target=_session_worker_loop, daemon=True, name="dictation-session-worker"
+    )
+    _session_worker.start()
+
+
+def _stop_session_worker() -> None:
+    _session_worker_stop.set()
+    _session_dispatch_queue.put(None)
 
 
 def _on_session_toggle() -> None:
@@ -219,6 +269,7 @@ def _on_session_toggle() -> None:
                 except Exception as exc:
                     log.warning("Session stop failed: %s", exc)
                 _session = None
+            _stop_session_worker()
             _session_active = False
             if _tray:
                 _tray.notify("Session: OFF")
@@ -239,6 +290,7 @@ def _on_session_toggle() -> None:
                 _tray.notify("webrtcvad-wheels not installed. pip install webrtcvad-wheels")
             return
         try:
+            _start_session_worker()
             _session = SessionManager(
                 on_burst=_on_session_burst,
                 level_callback=_on_audio_level,
@@ -252,6 +304,7 @@ def _on_session_toggle() -> None:
             log.info("Session mode ON")
         except Exception as exc:
             log.error("Session start failed: %s", exc)
+            _stop_session_worker()
             _session = None
             _session_active = False
             if _tray:
