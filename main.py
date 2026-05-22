@@ -357,6 +357,18 @@ def _dispatch(wav_path: Path) -> None:
     t_transcribe_end = time.monotonic()
     ms_transcribe = int((t_transcribe_end - t_rec_end) * 1000)
 
+    # Empty transcript means transcribe() dropped a silent or hallucinated
+    # burst. Skip the cleanup + paste round-trip and return to idle.
+    if not text_raw.strip():
+        log.info(
+            "Skipped dispatch: empty transcript (silence/noise/hallucination filter)"
+        )
+        if _tray:
+            _tray.set_idle()
+        if _overlay:
+            _overlay.set_state("idle")
+        return
+
     # Snippet shortcut: if the transcribed text (already with dictionary
     # substitutions applied inside transcribe()) matches a snippet cue
     # exactly, paste the expansion and skip LLM cleanup entirely.
@@ -561,6 +573,8 @@ def main() -> None:
         get_detected_language=lambda: _detected_language,
         get_audio_level=lambda: _current_audio_level,
         on_hide_gadget=_on_hide_gadget,
+        on_session_toggle=_on_session_toggle,
+        get_session_active=lambda: _session_active,
     )
 
     keyboard.on_press_key("1", _on_alt1_press, suppress=False)

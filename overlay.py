@@ -119,12 +119,16 @@ class Overlay:
         get_detected_language: Callable[[], str],
         get_audio_level: Callable[[], float],
         on_hide_gadget: Optional[Callable[[], None]] = None,
+        on_session_toggle: Optional[Callable[[], None]] = None,
+        get_session_active: Optional[Callable[[], bool]] = None,
     ) -> None:
         self._on_pause_toggle = on_pause_toggle
         self._on_force_mode = on_force_mode
         self._on_set_translate = on_set_translate
         self._on_quit = on_quit
         self._on_hide_gadget = on_hide_gadget
+        self._on_session_toggle = on_session_toggle
+        self._get_session_active = get_session_active or (lambda: False)
         self._get_auto_mode = get_auto_mode
         self._get_translate = get_translate
         self._get_forced = get_forced
@@ -319,6 +323,20 @@ class Overlay:
         )
         self._pause_button.pack(side="right")
 
+        # Mic toggle: one-click entry/exit into session mode (no Alt+1
+        # double-tap needed). Active state shows a red filled mic; idle
+        # shows a faint outline. Sits left of the pause icon.
+        self._mic_button = ctk.CTkButton(
+            bottom, text="◉",
+            fg_color="transparent", hover_color=BG_MENU_HOVER,
+            text_color=FG_SECONDARY,
+            font=(FONT_FAMILY, 13, "bold"),
+            width=22, height=22,
+            corner_radius=4,
+            command=self._on_mic_clicked,
+        )
+        self._mic_button.pack(side="right", padx=(0, 4))
+
         self._translate_badge = ctk.CTkLabel(
             bottom, text="⇄ EN",
             fg_color=BG_TRANSLATE_ON, text_color=FG_TRANSLATE,
@@ -409,6 +427,28 @@ class Overlay:
 
         # Pause glyph
         self._pause_button.configure(text="▶" if self._paused else "⏸")
+
+        # Mic button: shows the current session state. Active = red filled
+        # circle on a red panel; idle = grey outline.
+        session_on = False
+        try:
+            session_on = bool(self._get_session_active())
+        except Exception:
+            session_on = False
+        if session_on:
+            self._mic_button.configure(
+                text="●",
+                fg_color=STATE_COLOURS["recording"],
+                text_color=FG_PRIMARY,
+                hover_color="#dc2626",
+            )
+        else:
+            self._mic_button.configure(
+                text="◉",
+                fg_color="transparent",
+                text_color=FG_SECONDARY,
+                hover_color=BG_MENU_HOVER,
+            )
 
     def _poll_mode(self) -> None:
         # Re-render the mode + language live so auto-routing reflects
@@ -556,6 +596,17 @@ class Overlay:
 
     def _on_pause_clicked(self) -> None:
         self._on_pause_toggle()
+
+    # ------------------------------------------------------------------
+    # Mic click: toggle session mode on/off without the Alt+1 shortcut.
+    # ------------------------------------------------------------------
+
+    def _on_mic_clicked(self) -> None:
+        if self._on_session_toggle is None:
+            return
+        self._on_session_toggle()
+        if self._root:
+            self._root.after(50, self._refresh)
 
     # ------------------------------------------------------------------
     # Drag
