@@ -1,0 +1,21 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+
+# User-customised dictionary and snippets (keep .example only)
+dictionary.json
+snippets.json
+
+# Runtime state
+.overlay-state.json
+
+# Runtime logs
+logs/

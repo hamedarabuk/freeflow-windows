@@ -1,0 +1,14 @@
+{
+  "_comment": "Words and phrases the dictation should know about. 'terms' is passed to Whisper as a prompt so transcription is biased toward these spellings. 'substitutions' is a case-insensitive find-and-replace applied AFTER transcription to fix known mis-hearings. Both reload automatically when this file is edited. Copy this file to dictionary.json and customise.",
+  "terms": [
+    "Groq",
+    "Whisper",
+    "GitHub",
+    "OpenAI",
+    "Anthropic"
+  ],
+  "substitutions": {
+    "graph": "Groq",
+    "git up": "GitHub"
+  }
+}

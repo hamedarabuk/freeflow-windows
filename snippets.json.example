@@ -1,0 +1,8 @@
+{
+  "_comment": "Voice shortcuts. When the entire dictation matches a cue (case-insensitive, whitespace trimmed, trailing punctuation ignored), the snippet text is pasted instead of running LLM cleanup. Reloads automatically when this file is edited. Copy this file to snippets.json and customise.",
+  "snippets": {
+    "email signoff": "Best,\nYour name here",
+    "calendar link": "https://your-calendar-link-here",
+    "thanks for the message": "Thanks for the message. I will come back to you within 24 hours."
+  }
+}
