@@ -20,27 +20,22 @@ GROQ_AUDIO_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 MODEL = "whisper-large-v3"
 TIMEOUT_S = 30
 
-# Whisper's verbose_json returns a per-segment `no_speech_prob`. If the
-# average across all segments crosses this threshold the burst was almost
-# certainly silence or noise and Whisper hallucinated a transcript. Drop.
 _NO_SPEECH_PROB_CEILING = 0.7
+
+# Per-segment thresholds (OpenAI's published heuristics for catching
+# hallucinated segments inside otherwise-valid transcripts):
+#   no_speech_prob   >= 0.6  -> silence
+#   compression_ratio>= 2.4  -> repetition loop
+#   avg_logprob      <= -1.5 -> very low model confidence
+_SEG_NO_SPEECH = 0.6
+_SEG_COMPRESSION = 2.4
+_SEG_LOGPROB = -1.5
 
 log = logging.getLogger(__name__)
 
 
 def _is_hallucination(text: str) -> bool:
-    """Detect Whisper's classic silence/noise hallucination patterns.
-
-    Whisper trained on YouTube text emits a known repertoire of garbage
-    when fed silence, breath, or low-SNR audio: repeated tokens, looping
-    short phrases, or template strings ("Thank you for watching" etc.).
-    A pragmatic heuristic catches most of these without needing an LLM:
-
-      - three identical consecutive tokens (case-insensitive)
-      - two identical tokens forming the whole transcript when long enough
-      - two identical consecutive long tokens in a short transcript
-      - a two-token loop like "X Y X Y"
-    """
+    """Detect Whisper's classic silence/noise hallucination patterns."""
     if not text:
         return False
     tokens = text.split()
@@ -76,6 +71,76 @@ def _avg_no_speech_prob(payload: dict) -> float:
     return sum(probs) / len(probs)
 
 
+def _filter_segments(payload: dict) -> str:
+    """Walk verbose_json segments and drop hallucinated ones individually.
+
+    Whisper's tail-hallucination failure mode (valid prefix then garbage
+    proper-noun list or token loop) usually lands in one or two trailing
+    segments with elevated compression_ratio and depressed avg_logprob.
+    Per-segment filtering keeps the valid prefix and drops only the
+    suspect tail."""
+    segs = payload.get("segments") or []
+    if not segs:
+        return (payload.get("text") or "").strip()
+    kept: list[str] = []
+    dropped = 0
+    for s in segs:
+        ns = s.get("no_speech_prob")
+        cr = s.get("compression_ratio")
+        ap = s.get("avg_logprob")
+        if isinstance(ns, (int, float)) and ns >= _SEG_NO_SPEECH:
+            dropped += 1
+            continue
+        if isinstance(cr, (int, float)) and cr >= _SEG_COMPRESSION:
+            dropped += 1
+            continue
+        if isinstance(ap, (int, float)) and ap <= _SEG_LOGPROB:
+            dropped += 1
+            continue
+        t = (s.get("text") or "").strip()
+        if t:
+            kept.append(t)
+    if dropped:
+        log.info("Dropped %d hallucinated segment(s) of %d total", dropped, len(segs))
+    return " ".join(kept).strip()
+
+
+def _trim_hallucination_tail(text: str) -> str:
+    """Trim Whisper's tail-loop hallucinations off otherwise-valid text.
+
+    When per-segment filtering can't catch a hallucination, look at the
+    last few tokens for an obvious repeat ("Sadegh, Sadegh.") and walk
+    back to the previous sentence terminator. Conservative: only trims
+    if at least half the text survives."""
+    if not text:
+        return text
+    tokens = text.split()
+    n = len(tokens)
+    if n < 5:
+        return text
+    tail = [t.lower().strip(".,;:!?\"'()[]{}") for t in tokens[-4:]]
+    has_loop = False
+    for i in range(len(tail) - 1):
+        if tail[i] and tail[i] == tail[i + 1] and len(tail[i]) > 3:
+            has_loop = True
+            break
+    if not has_loop:
+        return text
+    cuts = []
+    for marker in (". ", "! ", "? "):
+        idx = text.rfind(marker)
+        if idx >= 0:
+            cuts.append(idx + len(marker))
+    if not cuts:
+        return text
+    cut = max(cuts)
+    trimmed = text[:cut].rstrip()
+    if not trimmed or len(trimmed) < len(text) * 0.5:
+        return text
+    log.info("Trimmed tail hallucination from transcript")
+    return trimmed
+
+
 def transcribe(wav_path: Path, api_key: str) -> tuple[str, str]:
     """Upload WAV to Groq Whisper and return (text, language).
 
@@ -98,14 +163,22 @@ def transcribe(wav_path: Path, api_key: str) -> tuple[str, str]:
         )
     response.raise_for_status()
     payload = response.json()
-    text: str = payload.get("text", "").strip()
     language: str = payload.get("language", "en")
+
     avg_nsp = _avg_no_speech_prob(payload)
     if avg_nsp >= _NO_SPEECH_PROB_CEILING:
-        log.info("Dropped burst: avg no_speech_prob=%.2f, text=%r", avg_nsp, text)
+        log.info(
+            "Dropped burst: avg no_speech_prob=%.2f, text=%r",
+            avg_nsp, payload.get("text", ""),
+        )
         return "", language
+
+    text = _filter_segments(payload)
+    text = _trim_hallucination_tail(text)
+
     if _is_hallucination(text):
         log.info("Dropped burst: hallucination pattern detected, text=%r", text)
         return "", language
+
     text = apply_substitutions(text)
     return text, language
