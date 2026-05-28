@@ -18,18 +18,19 @@ from dictionary import get_terms_prompt, apply_substitutions
 
 GROQ_AUDIO_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 MODEL = "whisper-large-v3"
-TIMEOUT_S = 30
+TIMEOUT_S = 60
 
 _NO_SPEECH_PROB_CEILING = 0.7
 
-# Per-segment thresholds (OpenAI's published heuristics for catching
-# hallucinated segments inside otherwise-valid transcripts):
-#   no_speech_prob   >= 0.6  -> silence
-#   compression_ratio>= 2.4  -> repetition loop
-#   avg_logprob      <= -1.5 -> very low model confidence
+# Per-segment thresholds for catching hallucinated segments.
+# Note: Groq's Whisper backend normalises these differently from the local
+# model. avg_logprob on long or proper-noun-heavy speech legitimately dips
+# below -1.5, so -1.5 drops valid content. -2.0 is the practical floor for
+# Groq. compression_ratio is tightened to 2.0 (from 2.4) because Groq
+# repetition hallucinations typically compress below 2.4.
 _SEG_NO_SPEECH = 0.6
-_SEG_COMPRESSION = 2.4
-_SEG_LOGPROB = -1.5
+_SEG_COMPRESSION = 2.0
+_SEG_LOGPROB = -2.0
 
 log = logging.getLogger(__name__)
 
