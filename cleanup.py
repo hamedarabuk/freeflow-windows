@@ -18,13 +18,14 @@ from pathlib import Path
 import requests
 
 from snippets import expand_snippet
+from settings import settings
 
-GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
-MODEL = "llama-3.3-70b-versatile"
-TEMPERATURE = 0.2
-MAX_TOKENS = 1024
-TIMEOUT_S          = 2.0
-TIMEOUT_TRANSLATE  = 3.5
+GROQ_CHAT_URL    = "https://api.groq.com/openai/v1/chat/completions"
+MODEL            = settings.cleanup_model
+TEMPERATURE      = 0.2
+MAX_TOKENS       = 1024
+TIMEOUT_S        = settings.cleanup_timeout_s
+TIMEOUT_TRANSLATE = settings.cleanup_timeout_translate_s
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
@@ -98,6 +99,8 @@ def clean(
     system_prompt = REWRITER_GUARD + _load_prompt(mode)
     if translate_to_english:
         system_prompt = system_prompt + TRANSLATE_SUFFIX
+    elif settings.codeswitching_preserve and settings.codeswitching_prompt:
+        system_prompt = system_prompt + "\n\n" + settings.codeswitching_prompt
 
     timeout = TIMEOUT_TRANSLATE if translate_to_english else TIMEOUT_S
 

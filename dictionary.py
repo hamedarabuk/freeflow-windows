@@ -19,12 +19,12 @@ import logging
 import re
 from pathlib import Path
 
+from settings import settings
+
 DICT_FILE     = Path(__file__).resolve().parent / "dictionary.json"
 EXAMPLE_FILE  = Path(__file__).resolve().parent / "dictionary.json.example"
 
-# Whisper's prompt is limited to ~224 tokens. Cap the joined string
-# to roughly 220 characters as a defensive ceiling.
-_MAX_PROMPT_CHARS = 220
+_MAX_PROMPT_CHARS = settings.max_prompt_chars
 
 log = logging.getLogger(__name__)
 

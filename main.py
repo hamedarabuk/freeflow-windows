@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -35,6 +36,7 @@ from paste import paste_text
 from recorder import Recorder
 from router import pick_mode, _get_foreground_info
 from snippets import expand_snippet
+from settings import settings
 from transcribe import transcribe
 from tray import TrayIcon
 from overlay import Overlay, load_state as _load_overlay_state
@@ -79,8 +81,8 @@ _session_lock = threading.Lock()
 _session = None  # type: ignore[var-annotated]
 _press_start_time: float = 0.0
 _last_tap_release_time: float = 0.0
-_DOUBLE_TAP_WINDOW_MS = 400
-_SHORT_TAP_MAX_MS = 250
+_DOUBLE_TAP_WINDOW_MS = settings.double_tap_window_ms
+_SHORT_TAP_MAX_MS = settings.short_tap_max_ms
 
 # Session-mode burst dispatch queue. Bursts arrive from the VAD audio thread
 # and must be processed strictly in order: parallel dispatches race on the
@@ -311,6 +313,98 @@ def _on_session_toggle() -> None:
                 _tray.notify(f"Session start failed: {exc}")
 
 
+def _normalise_cmd(text: str) -> str:
+    s = " ".join(text.lower().split())
+    while s and s[-1] in ".,;:!?":
+        s = s[:-1]
+    return s
+
+
+def _match_voice_command(text: str):
+    """Return (action, value) if text is an exact whole-transcript command match, else None."""
+    key = _normalise_cmd(text)
+    for cmd in settings.voice_commands:
+        phrases = cmd.get("phrases") or []
+        for phrase in phrases:
+            if key == _normalise_cmd(str(phrase)):
+                return cmd.get("action"), cmd.get("value")
+    return None
+
+
+def _build_inline_pattern():
+    """Return a compiled regex that matches any inline formatting phrase.
+
+    Builds once per call; callers are expected to cache the result if called
+    in a tight loop, but in practice this runs once per dispatch.
+    """
+    all_phrases = []
+    for entry in settings.inline_formatting:
+        for phrase in entry.get("phrases") or []:
+            all_phrases.append(re.escape(str(phrase)))
+    if not all_phrases:
+        return None
+    joined = "|".join(all_phrases)
+    return re.compile(
+        r"(?<![a-zA-Z])(" + joined + r")(?![a-zA-Z])",
+        re.IGNORECASE,
+    )
+
+
+def _split_inline_formatting(text: str):
+    """Split *text* at inline formatting phrases.
+
+    Returns a list of (segment_text, break_newlines) pairs where
+    break_newlines is the number of \\n characters that should follow that
+    segment.  The final entry always has break_newlines=0.
+
+    Returns None when no inline formatting phrase is found (fast path).
+    """
+    pattern = _build_inline_pattern()
+    if pattern is None:
+        return None
+
+    # Find the first match to decide whether to bother splitting at all.
+    if not pattern.search(text):
+        return None
+
+    # Build a lookup: normalised phrase -> newline count.
+    phrase_to_newlines: dict[str, int] = {}
+    for entry in settings.inline_formatting:
+        nl = int(entry.get("newlines") or 1)
+        for phrase in entry.get("phrases") or []:
+            phrase_to_newlines[_normalise_cmd(str(phrase))] = nl
+
+    segments = []
+    pos = 0
+    for m in pattern.finditer(text):
+        segment = text[pos:m.start()].strip(" ,")
+        matched_phrase = _normalise_cmd(m.group(1))
+        nl = phrase_to_newlines.get(matched_phrase, 1)
+        segments.append((segment, nl))
+        pos = m.end()
+
+    # Remainder after the last match.
+    tail = text[pos:].strip(" ,")
+    segments.append((tail, 0))
+    return segments
+
+
+def _paste_with_breaks(text: str) -> None:
+    """Inject *text* so that embedded \\n characters become real Enter presses.
+
+    Splits on \\n; for each non-empty part calls paste_text, then sends
+    keyboard Enter once per newline separator.  Handles leading/trailing
+    empty parts (an utterance that resolves to pure newlines still produces
+    the correct number of Enter presses).
+    """
+    parts = text.split("\n")
+    for i, part in enumerate(parts):
+        if part:
+            paste_text(part)
+        if i < len(parts) - 1:
+            keyboard.send("enter")
+
+
 def _dispatch(wav_path: Path) -> None:
     global _detected_language
     t_start = time.monotonic()
@@ -369,6 +463,40 @@ def _dispatch(wav_path: Path) -> None:
             _overlay.set_state("idle")
         return
 
+    # Voice command short-circuit: whole-transcript exact match only.
+    # Commands are checked before snippets so reserved phrases always win.
+    _cmd_result = _match_voice_command(text_raw)
+    if _cmd_result is not None:
+        _cmd_action, _cmd_value = _cmd_result
+        ms_total_cmd = int((time.monotonic() - t_start) * 1000)
+        try:
+            append(
+                mode_auto=mode_auto,
+                mode_forced=mode_forced,
+                language=language,
+                transcript_raw=text_raw,
+                transcript_clean=f"[command:{_cmd_action}:{_cmd_value}]",
+                app_process=process_name,
+                app_title=window_title,
+                ms_record=ms_record,
+                ms_transcribe=ms_transcribe,
+                ms_cleanup=0,
+                ms_total=ms_total_cmd,
+                fallback=False,
+            )
+        except Exception as exc:
+            log.warning("History append failed: %s", exc)
+        if _cmd_action == "text":
+            paste_text(_cmd_value)
+        elif _cmd_action == "key":
+            keyboard.send(_cmd_value)
+        log.info("Dispatched voice command [%s:%s] %dms total", _cmd_action, _cmd_value, ms_total_cmd)
+        if _tray:
+            _tray.set_idle()
+        if _overlay:
+            _overlay.set_state("idle")
+        return
+
     # Snippet shortcut: if the transcribed text (already with dictionary
     # substitutions applied inside transcribe()) matches a snippet cue
     # exactly, paste the expansion and skip LLM cleanup entirely.
@@ -403,42 +531,93 @@ def _dispatch(wav_path: Path) -> None:
             _overlay.set_state("idle")
         return
 
-    text_clean, fallback = clean(
-        text_raw, effective_mode, _cfg.groq_api_key,
-        translate_to_english=translate_flag,
-    )
+    # Inline formatting: split at "new paragraph" / "new line" / "next line"
+    # phrases found anywhere in the utterance, clean each segment separately,
+    # then rejoin with the recorded newline breaks.
+    inline_splits = _split_inline_formatting(text_raw)
 
-    # Re-apply dictionary substitutions to undo any paraphrasing by the
-    # cleanup LLM. transcribe() applies them once before cleanup; this
-    # second pass locks them in after cleanup. Skipped when translating
-    # because the cleanup output is in a different language to the
-    # dictionary keys.
-    if not translate_flag:
-        text_clean = apply_substitutions(text_clean)
-
-    t_cleanup_end = time.monotonic()
-    ms_cleanup = int((t_cleanup_end - t_transcribe_end) * 1000)
-    ms_total = int((t_cleanup_end - t_start) * 1000)
-
-    try:
-        append(
-            mode_auto=mode_auto,
-            mode_forced=mode_forced,
-            language=language,
-            transcript_raw=text_raw,
-            transcript_clean=text_clean,
-            app_process=process_name,
-            app_title=window_title,
-            ms_record=ms_record,
-            ms_transcribe=ms_transcribe,
-            ms_cleanup=ms_cleanup,
-            ms_total=ms_total,
-            fallback=fallback,
+    if inline_splits is None:
+        # Fast path: no inline formatting phrase present.  Single clean + paste,
+        # exactly the original behaviour.
+        text_clean, fallback = clean(
+            text_raw, effective_mode, _cfg.groq_api_key,
+            translate_to_english=translate_flag,
         )
-    except Exception as exc:
-        log.warning("History append failed: %s", exc)
+        if not translate_flag:
+            text_clean = apply_substitutions(text_clean)
+        t_cleanup_end = time.monotonic()
+        ms_cleanup = int((t_cleanup_end - t_transcribe_end) * 1000)
+        ms_total = int((t_cleanup_end - t_start) * 1000)
+        try:
+            append(
+                mode_auto=mode_auto,
+                mode_forced=mode_forced,
+                language=language,
+                transcript_raw=text_raw,
+                transcript_clean=text_clean,
+                app_process=process_name,
+                app_title=window_title,
+                ms_record=ms_record,
+                ms_transcribe=ms_transcribe,
+                ms_cleanup=ms_cleanup,
+                ms_total=ms_total,
+                fallback=fallback,
+            )
+        except Exception as exc:
+            log.warning("History append failed: %s", exc)
+        _paste_with_breaks(text_clean)
+    else:
+        # Inline formatting path: clean each non-empty segment, join with \n.
+        cleaned_parts = []
+        any_fallback = False
+        for segment, _nl in inline_splits:
+            if not segment:
+                cleaned_parts.append(("", False))
+                continue
+            if effective_mode == "raw":
+                cleaned_parts.append((segment, False))
+            else:
+                seg_clean, seg_fallback = clean(
+                    segment, effective_mode, _cfg.groq_api_key,
+                    translate_to_english=translate_flag,
+                )
+                if not translate_flag:
+                    seg_clean = apply_substitutions(seg_clean)
+                cleaned_parts.append((seg_clean, seg_fallback))
+                if seg_fallback:
+                    any_fallback = True
 
-    paste_text(text_clean)
+        # Assemble final text with real newline separators.
+        assembled_parts = []
+        for (seg_clean, _), (_, nl) in zip(cleaned_parts, inline_splits):
+            assembled_parts.append(seg_clean)
+            if nl:
+                assembled_parts.append("\n" * nl)
+        text_clean = "".join(assembled_parts)
+
+        t_cleanup_end = time.monotonic()
+        ms_cleanup = int((t_cleanup_end - t_transcribe_end) * 1000)
+        ms_total = int((t_cleanup_end - t_start) * 1000)
+        try:
+            append(
+                mode_auto=mode_auto,
+                mode_forced=mode_forced,
+                language=language,
+                transcript_raw=text_raw,
+                transcript_clean=text_clean,
+                app_process=process_name,
+                app_title=window_title,
+                ms_record=ms_record,
+                ms_transcribe=ms_transcribe,
+                ms_cleanup=ms_cleanup,
+                ms_total=ms_total,
+                fallback=any_fallback,
+            )
+        except Exception as exc:
+            log.warning("History append failed: %s", exc)
+        _paste_with_breaks(text_clean)
+        fallback = any_fallback
+
     log.info(
         "Dispatched [%s] lang=%s %dms total%s",
         effective_mode,
@@ -456,7 +635,7 @@ def _on_alt1_press(event) -> None:
     global _recording_active, _press_start_time
     if _paused:
         return
-    if not keyboard.is_pressed("alt"):
+    if not keyboard.is_pressed(settings.hotkey_modifier):
         return
     if _session_active:
         # During session mode the hold-to-talk path is suppressed; only
@@ -577,8 +756,8 @@ def main() -> None:
         get_session_active=lambda: _session_active,
     )
 
-    keyboard.on_press_key("1", _on_alt1_press, suppress=False)
-    keyboard.on_release_key("1", _on_alt1_release, suppress=False)
+    keyboard.on_press_key(settings.hotkey, _on_alt1_press, suppress=False)
+    keyboard.on_release_key(settings.hotkey, _on_alt1_release, suppress=False)
 
     log.info(
         "FreeFlow dictation running. Alt+1 = hold-to-talk. "

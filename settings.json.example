@@ -1,0 +1,106 @@
+{
+  "_comment": "Copy this file to settings.json and edit as needed. Missing keys fall back to the defaults baked into settings.py. Do not store secrets here.",
+
+  "hotkey": "1",
+  "hotkey_modifier": "alt",
+  "double_tap_window_ms": 400,
+  "short_tap_max_ms": 250,
+
+  "vad_aggressiveness": 2,
+  "vad_frame_duration_ms": 20,
+  "vad_speech_frames_to_start": 15,
+  "vad_silence_frames_to_end": 75,
+  "vad_pre_roll_frames": 25,
+  "vad_min_burst_frames": 25,
+  "vad_max_burst_frames": 1500,
+
+  "whisper_model": "whisper-large-v3",
+  "transcribe_timeout_s": 60,
+  "no_speech_prob_ceiling": 0.7,
+  "seg_no_speech": 0.6,
+  "seg_compression": 2.0,
+  "seg_logprob": -2.0,
+
+  "cleanup_model": "llama-3.3-70b-versatile",
+  "cleanup_timeout_s": 2.0,
+  "cleanup_timeout_translate_s": 3.5,
+
+  "max_prompt_chars": 220,
+
+  "_comment_voice_commands": "Voice commands: whole-transcript exact-match only. action='text' pastes value; action='key' sends a key chord via the keyboard library. Checked before snippets so reserved phrases always win. 'new line' and 'new paragraph' are handled by inline_formatting below.",
+  "voice_commands": [
+    {"phrases": ["scratch that", "delete that"],          "action": "key",  "value": "ctrl+z"},
+    {"phrases": ["send it", "send message", "send"],      "action": "key",  "value": "enter"}
+  ],
+
+  "_comment_inline_formatting": "Inline formatting commands: recognised case-insensitively on word boundaries anywhere in the utterance. The utterance is split at each match; each segment is cleaned separately; breaks become real newlines/Enter presses on injection.",
+  "inline_formatting": [
+    {"phrases": ["new paragraph"],          "newlines": 2},
+    {"phrases": ["new line", "next line"],  "newlines": 1}
+  ],
+
+  "_comment_codeswitching": "When codeswitching_preserve is true and translate is OFF, the codeswitching_prompt is appended to the cleanup system prompt so the LLM preserves mixed Farsi-English. Has no effect when translate is ON.",
+  "codeswitching_preserve": true,
+  "codeswitching_prompt": "The speaker may mix Persian (Farsi) and English within a single utterance. Preserve both languages exactly as spoken: do not translate, transliterate, or collapse mixed Farsi-English into a single language. Keep Persian script for Farsi words and English script for English words.",
+
+  "router_rules": [
+    {
+      "match": "process",
+      "pattern": "code.exe",
+      "mode": "raw",
+      "_comment": "VS Code -> raw"
+    },
+    {
+      "match": "process_regex",
+      "pattern": "^(idea64|pycharm64|webstorm64|goland64|clion64|rider64|datagrip64|fleet|phpstorm64)\\.exe$",
+      "mode": "raw",
+      "_comment": "JetBrains IDEs -> raw"
+    },
+    {
+      "match": "title",
+      "pattern": "claude",
+      "process_also": [
+        "windowsterminal.exe",
+        "pwsh.exe",
+        "powershell.exe",
+        "cmd.exe",
+        "wezterm.exe",
+        "alacritty.exe"
+      ],
+      "mode": "prompt",
+      "_comment": "Terminal with 'claude' in title -> prompt"
+    },
+    {
+      "match": "title",
+      "pattern": "claw",
+      "process_also": [
+        "windowsterminal.exe",
+        "pwsh.exe",
+        "powershell.exe",
+        "cmd.exe",
+        "wezterm.exe",
+        "alacritty.exe"
+      ],
+      "mode": "prompt",
+      "_comment": "Terminal with 'claw' in title -> prompt"
+    },
+    {
+      "match": "process",
+      "pattern": "telegram.exe",
+      "mode": "note",
+      "_comment": "Telegram -> note"
+    },
+    {
+      "match": "process",
+      "pattern": "obsidian.exe",
+      "mode": "brand_voice",
+      "_comment": "Obsidian -> brand_voice"
+    },
+    {
+      "match": "title",
+      "pattern": "linkedin",
+      "mode": "brand_voice",
+      "_comment": "LinkedIn in any browser title -> brand_voice"
+    }
+  ]
+}

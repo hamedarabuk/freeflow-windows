@@ -33,18 +33,19 @@ try:
 except ImportError:
     _HAVE_VAD = False
 
+from settings import settings
 
 SAMPLE_RATE = 16_000
-FRAME_DURATION_MS = 20
-FRAME_SAMPLES = int(SAMPLE_RATE * FRAME_DURATION_MS / 1000)   # 320
-FRAME_BYTES = FRAME_SAMPLES * 2                                # 640 (int16)
+FRAME_DURATION_MS      = settings.vad_frame_duration_ms
+FRAME_SAMPLES          = int(SAMPLE_RATE * FRAME_DURATION_MS / 1000)   # 320
+FRAME_BYTES            = FRAME_SAMPLES * 2                              # 640 (int16)
 
-VAD_AGGRESSIVENESS    = 2     # 0..3; 2 is a good speech/noise balance
-SPEECH_FRAMES_TO_START = 15   # 300ms of speech to confirm burst start
-SILENCE_FRAMES_TO_END  = 75   # 1500ms of silence to end burst
-PRE_ROLL_FRAMES        = 25   # 500ms pre-roll, covers the 300ms speech-detect window so the burst onset is not clipped
-MIN_BURST_FRAMES       = 25   # 500ms minimum (skip pops + half-words)
-MAX_BURST_FRAMES       = 1500 # 30s max before force-flush
+VAD_AGGRESSIVENESS     = settings.vad_aggressiveness
+SPEECH_FRAMES_TO_START = settings.vad_speech_frames_to_start
+SILENCE_FRAMES_TO_END  = settings.vad_silence_frames_to_end
+PRE_ROLL_FRAMES        = settings.vad_pre_roll_frames
+MIN_BURST_FRAMES       = settings.vad_min_burst_frames
+MAX_BURST_FRAMES       = settings.vad_max_burst_frames
 
 log = logging.getLogger(__name__)
 

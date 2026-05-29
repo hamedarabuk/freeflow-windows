@@ -3,6 +3,9 @@ router.py — foreground window detection -> dictation mode.
 
 Uses pywin32 + psutil. First match in RULES wins.
 Modes: polished | brand_voice | prompt | note | raw
+
+Routing rules are loaded from settings.py (which reads settings.json if
+present). The default rule set reproduces the original hardcoded behaviour.
 """
 
 from __future__ import annotations
@@ -18,19 +21,7 @@ try:
 except ImportError:
     _WIN32_AVAILABLE = False
 
-JETBRAINS_RE = re.compile(
-    r"^(idea64|pycharm64|webstorm64|goland64|clion64|rider64|datagrip64|fleet|phpstorm64)\.exe$",
-    re.IGNORECASE,
-)
-TERMINAL_PROCESSES = {
-    "windowsterminal.exe",
-    "pwsh.exe",
-    "powershell.exe",
-    "cmd.exe",
-    "wezterm.exe",
-    "alacritty.exe",
-}
-CODE_PROCESSES = {"code.exe"}
+from settings import settings
 
 
 def _get_foreground_info() -> tuple[str, str]:
@@ -51,19 +42,10 @@ def pick_mode(
     process_name: Optional[str] = None,
     window_title: Optional[str] = None,
 ) -> str:
-    """
-    Return the dictation mode for the given foreground context.
+    """Return the dictation mode for the given foreground context.
 
     If process_name/window_title are None, auto-detect from the OS.
-    Rules (first match wins):
-      1. Code / JetBrains IDEs -> raw
-      2. Terminal with claude / ai / llm in title -> prompt
-      3. Telegram -> note
-      4. Obsidian -> brand_voice
-      5. LinkedIn in any browser title -> brand_voice
-      6. Otherwise -> polished
-
-    Customise these rules to match your own apps.
+    First match in settings.router_rules wins; no match returns 'polished'.
     """
     if process_name is None or window_title is None:
         process_name, window_title = _get_foreground_info()
@@ -71,22 +53,26 @@ def pick_mode(
     pname = process_name.lower()
     title = window_title.lower()
 
-    if pname in CODE_PROCESSES or JETBRAINS_RE.match(pname):
-        return "raw"
+    for rule in settings.router_rules:
+        match_type = rule.get("match", "process")
+        pattern = rule.get("pattern", "")
+        mode = rule.get("mode", "polished")
 
-    if pname in TERMINAL_PROCESSES and (
-        "claude" in title or "ai" in title or "llm" in title
-    ):
-        return "prompt"
+        if match_type == "process":
+            if pname == pattern.lower():
+                return mode
 
-    if pname == "telegram.exe":
-        return "note"
+        elif match_type == "process_regex":
+            if re.match(pattern, pname, re.IGNORECASE):
+                return mode
 
-    if pname == "obsidian.exe":
-        return "brand_voice"
-
-    if "linkedin" in title:
-        return "brand_voice"
+        elif match_type == "title":
+            process_also = rule.get("process_also")
+            if process_also is not None:
+                if pname not in {p.lower() for p in process_also}:
+                    continue
+            if pattern.lower() in title:
+                return mode
 
     return "polished"
 

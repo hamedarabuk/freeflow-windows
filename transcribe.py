@@ -15,22 +15,15 @@ import requests
 from pathlib import Path
 
 from dictionary import get_terms_prompt, apply_substitutions
+from settings import settings
 
 GROQ_AUDIO_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
-MODEL = "whisper-large-v3"
-TIMEOUT_S = 60
-
-_NO_SPEECH_PROB_CEILING = 0.7
-
-# Per-segment thresholds for catching hallucinated segments.
-# Note: Groq's Whisper backend normalises these differently from the local
-# model. avg_logprob on long or proper-noun-heavy speech legitimately dips
-# below -1.5, so -1.5 drops valid content. -2.0 is the practical floor for
-# Groq. compression_ratio is tightened to 2.0 (from 2.4) because Groq
-# repetition hallucinations typically compress below 2.4.
-_SEG_NO_SPEECH = 0.6
-_SEG_COMPRESSION = 2.0
-_SEG_LOGPROB = -2.0
+MODEL                   = settings.whisper_model
+TIMEOUT_S               = settings.transcribe_timeout_s
+_NO_SPEECH_PROB_CEILING = settings.no_speech_prob_ceiling
+_SEG_NO_SPEECH          = settings.seg_no_speech
+_SEG_COMPRESSION        = settings.seg_compression
+_SEG_LOGPROB            = settings.seg_logprob
 
 log = logging.getLogger(__name__)
 
