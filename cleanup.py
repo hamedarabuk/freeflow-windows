@@ -102,7 +102,9 @@ def clean(
     elif settings.codeswitching_preserve and settings.codeswitching_prompt:
         system_prompt = system_prompt + "\n\n" + settings.codeswitching_prompt
 
-    timeout = TIMEOUT_TRANSLATE if translate_to_english else TIMEOUT_S
+    base_timeout = TIMEOUT_TRANSLATE if translate_to_english else TIMEOUT_S
+    extra = (len(transcript) / 100) * settings.cleanup_timeout_per_100_chars_s
+    timeout = base_timeout + extra
 
     wrapped = f"<<<TRANSCRIPT>>>\n{transcript}\n<<</TRANSCRIPT>>>"
 
@@ -138,5 +140,17 @@ def clean(
             content = content[1:-1].strip()
         return content, False
     except Exception as exc:
+        # For short transcripts the raw text is usually acceptable; return it
+        # so the user gets something rather than nothing.
+        # For long transcripts the raw Whisper output frequently contains
+        # hallucinated garbage (tail-loops, phantom proper nouns) that the
+        # cleanup call was supposed to filter. Pasting it would produce the
+        # exact symptom Hamed reported. Return empty so nothing is pasted.
+        if len(transcript) > 120:
+            log.warning(
+                "Cleanup failed on long transcript (%d chars), suppressing raw output: %s",
+                len(transcript), exc,
+            )
+            return "", True
         log.warning("Cleanup failed (%s), using raw transcript", exc)
         return transcript.strip(), True

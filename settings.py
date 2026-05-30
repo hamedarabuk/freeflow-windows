@@ -145,6 +145,9 @@ class DictationSettings:
     cleanup_model: str = "llama-3.3-70b-versatile"
     cleanup_timeout_s: float = 2.0
     cleanup_timeout_translate_s: float = 3.5
+    # Additional seconds granted per 100 characters of transcript so long
+    # utterances do not hit the flat timeout and fall back to raw Whisper output.
+    cleanup_timeout_per_100_chars_s: float = 0.3
 
     # dictionary.py
     max_prompt_chars: int = 220
@@ -218,6 +221,7 @@ def _load_settings() -> DictationSettings:
         "cleanup_model",
         "cleanup_timeout_s",
         "cleanup_timeout_translate_s",
+        "cleanup_timeout_per_100_chars_s",
         "max_prompt_chars",
     ]
     for key in scalar_keys:

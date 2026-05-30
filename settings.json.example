@@ -24,6 +24,7 @@
   "cleanup_model": "llama-3.3-70b-versatile",
   "cleanup_timeout_s": 2.0,
   "cleanup_timeout_translate_s": 3.5,
+  "cleanup_timeout_per_100_chars_s": 0.3,
 
   "max_prompt_chars": 220,
 
