@@ -183,7 +183,16 @@ def _ensure_user_config(name: str) -> Path:
 
 
 def _on_edit_dictionary() -> None:
-    os.startfile(str(_ensure_user_config("dictionary")))
+    # Runs on the pystray tray thread. Creating a Tk/CTk window here would
+    # crash the app, so marshal the open onto the main Tk loop via the
+    # overlay's root.after(). Fall back to the raw file only if no root yet.
+    _ensure_user_config("dictionary")
+    root = _overlay.tk_root if _overlay else None
+    if root is not None:
+        from dictionary_editor import open_dictionary_editor
+        root.after(0, lambda: open_dictionary_editor(root))
+    else:
+        os.startfile(str(_ensure_user_config("dictionary")))
 
 
 def _on_edit_snippets() -> None:

@@ -169,6 +169,12 @@ class Overlay:
     # Public API (thread-safe via root.after)
     # ------------------------------------------------------------------
 
+    @property
+    def tk_root(self) -> Optional[ctk.CTk]:
+        """The live CTk root, or None before run() is called. Use its .after()
+        to marshal work onto the main Tk loop from another thread."""
+        return self._root
+
     def set_state(self, state: str) -> None:
         self._state = state
         if self._root:

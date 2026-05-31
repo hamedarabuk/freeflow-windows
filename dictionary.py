@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -96,3 +97,48 @@ def apply_substitutions(text: str) -> str:
         except Exception:
             continue
     return out
+
+
+def load_substitutions() -> dict:
+    """Current say->write substitutions map (a fresh copy, safe to mutate)."""
+    data = _load()
+    return dict(data["substitutions"])
+
+
+def save_substitutions(mapping: dict) -> None:
+    """Replace ONLY the substitutions in dictionary.json, preserving all other
+    top-level keys (terms, comments, etc.). Writes atomically (temp file in the
+    same directory, then os.replace) and refreshes the module cache so the
+    change is live on the next dictation without an mtime race."""
+    # Start from the real dictionary.json if it exists, else the example, so a
+    # first-time save still seeds terms and any comment keys.
+    src = _source()
+    try:
+        existing = json.loads(src.read_text(encoding="utf-8")) if src.exists() else {}
+        if not isinstance(existing, dict):
+            existing = {}
+    except Exception as exc:
+        log.warning("Could not read %s before save, starting fresh: %s", src, exc)
+        existing = {}
+
+    clean = {str(k): str(v) for k, v in mapping.items() if str(k).strip()}
+    existing["substitutions"] = clean
+
+    tmp = DICT_FILE.with_name(DICT_FILE.name + ".tmp")
+    text = json.dumps(existing, indent=2, ensure_ascii=False)
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, DICT_FILE)
+
+    # Refresh the cache directly from what we just wrote (no mtime read race):
+    # _load filters terms/substitutions to the same normalised shape.
+    _cache["data"] = {
+        "terms": [
+            str(t) for t in existing.get("terms", []) if str(t).strip()
+        ],
+        "substitutions": clean,
+    }
+    try:
+        _cache["mtime"] = DICT_FILE.stat().st_mtime
+    except Exception:
+        _cache["mtime"] = -1.0
+    log.info("Saved %d substitutions to %s", len(clean), DICT_FILE.name)
