@@ -88,7 +88,10 @@ def apply_substitutions(text: str) -> str:
     out = text
     for src, dst in subs.items():
         try:
-            pattern = re.compile(re.escape(src), re.IGNORECASE)
+            escaped = re.escape(src)
+            lb = r"\b" if src and re.match(r"\w", src[0]) else ""
+            rb = r"\b" if src and re.match(r"\w", src[-1]) else ""
+            pattern = re.compile(lb + escaped + rb, re.IGNORECASE)
             out = pattern.sub(dst, out)
         except Exception:
             continue
