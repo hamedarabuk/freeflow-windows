@@ -214,6 +214,16 @@ def _on_show_gadget() -> None:
         _overlay.show()
 
 
+def _post_dispatch_state() -> str:
+    """Return the overlay state to restore after a dispatch completes.
+
+    In session mode the stream stays open and the indicator must return to
+    'session' (showing the equaliser and keeping the eq-tick alive) so the
+    user can see the mic is still active between utterances. In hold-to-talk
+    mode the correct state is 'idle'."""
+    return "session" if _session_active else "idle"
+
+
 def _on_session_burst(wav_path: Path) -> None:
     """SessionManager calls this from the audio thread for each finalised
     speech burst. Enqueue and return immediately; a single worker thread
@@ -437,7 +447,7 @@ def _dispatch(wav_path: Path) -> None:
             _tray.set_idle()
             _tray.notify("Transcription failed.")
         if _overlay:
-            _overlay.set_state("idle")
+            _overlay.set_state(_post_dispatch_state())
         return
     finally:
         try:
@@ -460,7 +470,7 @@ def _dispatch(wav_path: Path) -> None:
         if _tray:
             _tray.set_idle()
         if _overlay:
-            _overlay.set_state("idle")
+            _overlay.set_state(_post_dispatch_state())
         return
 
     # Voice command short-circuit: whole-transcript exact match only.
@@ -494,7 +504,7 @@ def _dispatch(wav_path: Path) -> None:
         if _tray:
             _tray.set_idle()
         if _overlay:
-            _overlay.set_state("idle")
+            _overlay.set_state(_post_dispatch_state())
         return
 
     # Snippet shortcut: if the transcribed text (already with dictionary
@@ -528,7 +538,7 @@ def _dispatch(wav_path: Path) -> None:
         if _tray:
             _tray.set_idle()
         if _overlay:
-            _overlay.set_state("idle")
+            _overlay.set_state(_post_dispatch_state())
         return
 
     # Inline formatting: split at "new paragraph" / "new line" / "next line"
@@ -628,7 +638,7 @@ def _dispatch(wav_path: Path) -> None:
     if _tray:
         _tray.set_idle()
     if _overlay:
-        _overlay.set_state("idle")
+        _overlay.set_state(_post_dispatch_state())
 
 
 def _on_alt1_press(event) -> None:

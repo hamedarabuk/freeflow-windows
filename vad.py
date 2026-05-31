@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import collections
 import logging
+import queue
 import tempfile
+import threading
 import wave
 from pathlib import Path
 from typing import Callable, Optional
@@ -76,11 +78,18 @@ class SessionManager:
         self._in_speech = False
         self._speech_frame_count = 0
         self._silence_frame_count = 0
+        self._burst_queue: queue.Queue = queue.Queue()
+        self._worker: Optional[threading.Thread] = None
 
     def start(self) -> None:
         if self._stream is not None:
             return
         self._reset_state()
+        self._burst_queue = queue.Queue()
+        self._worker = threading.Thread(
+            target=self._burst_worker, name="vad-burst-writer", daemon=True
+        )
+        self._worker.start()
         self._stream = sd.InputStream(
             samplerate=SAMPLE_RATE,
             channels=1,
@@ -97,10 +106,15 @@ class SessionManager:
         self._stream.stop()
         self._stream.close()
         self._stream = None
-        # Finalise any in-progress burst before exiting.
+        # Enqueue any in-progress burst for the worker, then signal it to drain.
         if self._in_speech and len(self._burst_frames) >= MIN_BURST_FRAMES:
-            self._finalise_burst()
+            self._burst_queue.put(list(self._burst_frames))
         self._reset_state()
+        # Sentinel tells the worker to stop after draining.
+        self._burst_queue.put(None)
+        if self._worker is not None:
+            self._worker.join()
+            self._worker = None
         log.info("Session VAD stream stopped")
 
     def _reset_state(self) -> None:
@@ -111,6 +125,8 @@ class SessionManager:
         self._silence_frame_count = 0
 
     def _callback(self, indata, frames, time_info, status) -> None:
+        if status:
+            log.warning("PortAudio callback status (input overflow or underrun): %s", status)
         # sounddevice should deliver exactly FRAME_SAMPLES given blocksize,
         # but guard defensively for the off-by-one case at stream end.
         if frames != FRAME_SAMPLES:
@@ -144,7 +160,9 @@ class SessionManager:
                     or len(self._burst_frames) >= MAX_BURST_FRAMES
                 ):
                     if len(self._burst_frames) >= MIN_BURST_FRAMES:
-                        self._finalise_burst()
+                        # Snapshot frames and hand off to the worker thread.
+                        # No blocking I/O on the audio callback.
+                        self._burst_queue.put(list(self._burst_frames))
                     self._reset_state()
         else:
             # Outside a burst: keep pre-roll fresh and watch for confirmed speech.
@@ -159,8 +177,16 @@ class SessionManager:
             else:
                 self._speech_frame_count = 0
 
-    def _finalise_burst(self) -> None:
-        audio = b"".join(self._burst_frames)
+    def _burst_worker(self) -> None:
+        """Drain the burst queue on a dedicated thread. Stops on None sentinel."""
+        while True:
+            item = self._burst_queue.get()
+            if item is None:
+                break
+            self._finalise_burst(item)
+
+    def _finalise_burst(self, burst_frames: list[bytes]) -> None:
+        audio = b"".join(burst_frames)
         tmp = tempfile.NamedTemporaryFile(
             suffix=".wav", delete=False, prefix="dictation_session_"
         )
@@ -173,8 +199,8 @@ class SessionManager:
             path = Path(tmp.name)
             log.info(
                 "Session burst finalised: %d frames (%.1fs)",
-                len(self._burst_frames),
-                len(self._burst_frames) * FRAME_DURATION_MS / 1000,
+                len(burst_frames),
+                len(burst_frames) * FRAME_DURATION_MS / 1000,
             )
             try:
                 self._on_burst(path)
