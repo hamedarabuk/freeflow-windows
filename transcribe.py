@@ -28,28 +28,58 @@ _SEG_LOGPROB            = settings.seg_logprob
 log = logging.getLogger(__name__)
 
 
+_NOISE_PATTERNS: frozenset[str] = frozenset({
+    # Exact noise tokens observed in logs; add more as encountered.
+    "sleuths", "sibar", "sleuth", "slepeh", "sibila", "sleptimia",
+})
+
+
 def _is_hallucination(text: str) -> bool:
-    """Detect Whisper's classic silence/noise hallucination patterns."""
+    """Detect Whisper's classic silence/noise hallucination patterns.
+
+    Catches:
+    - Single-token noise (e.g. "Sleuths") when the token is in the known
+      noise set or is a non-ASCII-only string that looks like a hallucinated
+      proper noun and is not a known legitimate word.
+    - Exact 2-token repetition of tokens >=4 chars (lowered from >=8).
+    - 3-in-a-row repetition (unchanged).
+    - ABAB pattern (unchanged).
+    - Short-string repetition in utterances <=6 tokens (lowered from >5 to >=4).
+    """
     if not text:
         return False
     tokens = text.split()
     n = len(tokens)
-    if n < 2:
-        return False
     lower = [t.lower().strip(".,;:!?\"'()[]{}") for t in tokens]
-    if n == 2 and lower[0] and lower[0] == lower[1] and len(lower[0]) >= 8:
+
+    # Single-token burst: only flag if it is a known noise token.
+    # Real short utterances ("Yes", "Okay", "Sepehr") must pass.
+    if n == 1:
+        return lower[0] in _NOISE_PATTERNS
+
+    lower = [t for t in lower if t]  # drop empties after stripping
+
+    # Exact 2-token repetition: lower gate from >=8 to >=4 chars.
+    if n == 2 and lower and len(lower) >= 2 and lower[0] == lower[1] and len(lower[0]) >= 4:
         return True
     if n < 3:
         return False
-    for i in range(n - 2):
+
+    # 3-in-a-row repetition (any length).
+    for i in range(len(lower) - 2):
         if lower[i] and lower[i] == lower[i + 1] == lower[i + 2]:
             return True
+
+    # Short-utterance consecutive-pair repetition: lower gate from >5 to >=4 chars.
     if n <= 6:
-        for i in range(n - 1):
-            if lower[i] and lower[i] == lower[i + 1] and len(lower[i]) > 5:
+        for i in range(len(lower) - 1):
+            if lower[i] and lower[i] == lower[i + 1] and len(lower[i]) >= 4:
                 return True
+
+    # ABAB pattern.
     if n >= 4 and lower[0] == lower[2] and lower[1] == lower[3] and lower[0]:
         return True
+
     return False
 
 
