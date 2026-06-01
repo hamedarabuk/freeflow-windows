@@ -37,14 +37,19 @@ _NOISE_PATTERNS: frozenset[str] = frozenset({
 def _is_hallucination(text: str) -> bool:
     """Detect Whisper's classic silence/noise hallucination patterns.
 
+    Deliberately conservative: a false positive here silently deletes the
+    user's speech with no paste and (historically) no record, which is the
+    worst outcome. Real speech legitimately repeats short words ("that that",
+    "no no", "go go go" is rarer but possible), so we only flag patterns that
+    are overwhelmingly hallucination, not ordinary doubled words.
+
     Catches:
-    - Single-token noise (e.g. "Sleuths") when the token is in the known
-      noise set or is a non-ASCII-only string that looks like a hallucinated
-      proper noun and is not a known legitimate word.
-    - Exact 2-token repetition of tokens >=4 chars (lowered from >=8).
-    - 3-in-a-row repetition (unchanged).
-    - ABAB pattern (unchanged).
-    - Short-string repetition in utterances <=6 tokens (lowered from >5 to >=4).
+    - Single-token noise only when it is a known observed noise token.
+    - 3-or-more in-a-row repetition of the same token (a true loop; ordinary
+      speech almost never triples a word).
+    - ABABAB+ repetition over the whole utterance (>=6 tokens of a 2-cycle).
+    Does NOT flag a single doubled word (that demonstrably dropped real short
+    utterances after the gate was lowered to >=4 chars on 2026-05-31).
     """
     if not text:
         return False
@@ -58,27 +63,28 @@ def _is_hallucination(text: str) -> bool:
         return lower[0] in _NOISE_PATTERNS
 
     lower = [t for t in lower if t]  # drop empties after stripping
-
-    # Exact 2-token repetition: lower gate from >=8 to >=4 chars.
-    if n == 2 and lower and len(lower) >= 2 and lower[0] == lower[1] and len(lower[0]) >= 4:
-        return True
-    if n < 3:
+    # 2-token case: flag only when both tokens are known noise patterns.
+    # This catches "you you" / "sleuths sleuths" pairs while preserving
+    # real two-word utterances like "Claude Code" or "thank you".
+    if len(lower) == 2:
+        return lower[0] in _NOISE_PATTERNS and lower[1] in _NOISE_PATTERNS
+    if len(lower) < 3:
         return False
 
-    # 3-in-a-row repetition (any length).
+    # 3-in-a-row repetition of the same token (a genuine loop).
     for i in range(len(lower) - 2):
         if lower[i] and lower[i] == lower[i + 1] == lower[i + 2]:
             return True
 
-    # Short-utterance consecutive-pair repetition: lower gate from >5 to >=4 chars.
-    if n <= 6:
-        for i in range(len(lower) - 1):
-            if lower[i] and lower[i] == lower[i + 1] and len(lower[i]) >= 4:
-                return True
-
-    # ABAB pattern.
-    if n >= 4 and lower[0] == lower[2] and lower[1] == lower[3] and lower[0]:
-        return True
+    # Pure ABAB... loop spanning the whole short utterance (e.g. a 2-cycle
+    # repeated three+ times). Requires the entire transcript to be the loop,
+    # so it cannot fire on real speech that merely contains a doubled word.
+    if 6 <= len(lower) <= 12:
+        a, b = lower[0], lower[1]
+        if a and b and a != b and all(
+            lower[i] == (a if i % 2 == 0 else b) for i in range(len(lower))
+        ):
+            return True
 
     return False
 
@@ -93,6 +99,16 @@ def _avg_no_speech_prob(payload: dict) -> float:
     if not probs:
         return 0.0
     return sum(probs) / len(probs)
+
+
+def _max_compression_ratio(payload: dict) -> float:
+    segs = payload.get("segments") or []
+    crs = [
+        s.get("compression_ratio")
+        for s in segs
+        if isinstance(s.get("compression_ratio"), (int, float))
+    ]
+    return max(crs) if crs else 0.0
 
 
 def _filter_segments(payload: dict) -> str:
@@ -132,22 +148,59 @@ def _filter_segments(payload: dict) -> str:
 def _trim_hallucination_tail(text: str) -> str:
     """Trim Whisper's tail-loop hallucinations off otherwise-valid text.
 
-    When per-segment filtering can't catch a hallucination, look at the
-    last few tokens for an obvious repeat ("Sadegh, Sadegh.") and walk
-    back to the previous sentence terminator. Conservative: only trims
-    if at least half the text survives."""
+    Whisper's dominant garbage mode here is a doubled (or tripled) phantom
+    proper noun appended to the END of a long valid transcript with no
+    sentence terminator in front of it, e.g.
+        "... a time that suits them Sibiria Sibiria"
+        "... but if they are Sleptimia Sleptimia"
+    The prior implementation only cut back to a preceding ". "/"! "/"? ",
+    so these terminator-less tails survived and reached cleanup, which is the
+    long-standing 'garbage words' symptom.
+
+    Strategy:
+    1. Token-level: drop a trailing run of repeated identical tokens (the
+       loop itself), keeping one copy only if it is a real dictionary term;
+       otherwise drop the whole repeated run. This removes "X X" / "X X X"
+       tails directly without needing a sentence boundary.
+    2. Fall back to the previous sentence-terminator trim for looser cases.
+    Conservative: never trims below half the original length."""
     if not text:
         return text
     tokens = text.split()
     n = len(tokens)
     if n < 5:
         return text
-    tail = [t.lower().strip(".,;:!?\"'()[]{}") for t in tokens[-4:]]
-    has_loop = False
-    for i in range(len(tail) - 1):
-        if tail[i] and tail[i] == tail[i + 1] and len(tail[i]) > 3:
-            has_loop = True
-            break
+
+    def _norm(tok: str) -> str:
+        return tok.lower().strip(".,;:!?\"'()[]{}")
+
+    # 1. Trailing identical-token run (the loop). Walk back over tokens that
+    # repeat the final token.
+    last_norm = _norm(tokens[-1])
+    if last_norm and len(last_norm) > 2:
+        run = 1
+        for i in range(n - 2, -1, -1):
+            if _norm(tokens[i]) == last_norm:
+                run += 1
+            else:
+                break
+        if run >= 2:
+            kept = tokens[: n - run]
+            trimmed = " ".join(kept).rstrip(" ,;").rstrip()
+            # Re-attach terminating punctuation if the kept tail lost it.
+            if trimmed and len(trimmed) >= len(text) * 0.5:
+                log.info(
+                    "Trimmed tail hallucination loop: %d repeats of %r",
+                    run, tokens[-1],
+                )
+                return trimmed
+
+    # 2. Loose tail repeat: cut back to the previous sentence terminator.
+    tail = [_norm(t) for t in tokens[-4:]]
+    has_loop = any(
+        tail[i] and tail[i] == tail[i + 1] and len(tail[i]) > 3
+        for i in range(len(tail) - 1)
+    )
     if not has_loop:
         return text
     cuts = []
@@ -192,8 +245,8 @@ def transcribe(wav_path: Path, api_key: str) -> tuple[str, str]:
     avg_nsp = _avg_no_speech_prob(payload)
     if avg_nsp >= _NO_SPEECH_PROB_CEILING:
         log.info(
-            "Dropped burst: avg no_speech_prob=%.2f, text=%r",
-            avg_nsp, payload.get("text", ""),
+            "Dropped burst: avg no_speech_prob=%.2f, max_compression_ratio=%.2f, text=%r",
+            avg_nsp, _max_compression_ratio(payload), payload.get("text", ""),
         )
         return "", language
 

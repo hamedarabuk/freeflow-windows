@@ -69,14 +69,25 @@ def _load() -> dict:
 
 
 def get_terms_prompt() -> str:
-    """Space-joined list of dictionary terms for Whisper's prompt param."""
+    """Space-joined list of dictionary terms for Whisper's prompt param.
+
+    The prompt is built as a natural sentence ending in a full stop rather
+    than a bare space-joined word list. A bare proper-noun list primes
+    Whisper to emit those proper nouns (and proper-noun-shaped hallucinations)
+    during low-confidence audio such as silence tails and breaths, which is a
+    known driver of the phantom-name garbage seen in long-utterance tails.
+    Framing the bias terms inside a finished sentence reduces that carry-over.
+    """
     data = _load()
     terms = data["terms"]
     if not terms:
         return ""
-    prompt = " ".join(terms)
+    joined = ", ".join(terms)
+    prompt = f"Glossary of names and terms that may appear: {joined}."
     if len(prompt) > _MAX_PROMPT_CHARS:
-        prompt = prompt[:_MAX_PROMPT_CHARS]
+        # Truncate the term list, then re-close the sentence so the prompt
+        # never ends mid-word (which reintroduces the bare-fragment bias).
+        prompt = prompt[:_MAX_PROMPT_CHARS].rstrip(" ,") + "."
     return prompt
 
 
