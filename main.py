@@ -196,7 +196,16 @@ def _on_edit_dictionary() -> None:
 
 
 def _on_edit_snippets() -> None:
-    os.startfile(str(_ensure_user_config("snippets")))
+    # Runs on the pystray tray thread. Creating a Tk/CTk window here would
+    # crash the app, so marshal the open onto the main Tk loop via the
+    # overlay's root.after(). Fall back to the raw file only if no root yet.
+    _ensure_user_config("snippets")
+    root = _overlay.tk_root if _overlay else None
+    if root is not None:
+        from snippets_editor import open_snippets_editor
+        root.after(0, lambda: open_snippets_editor(root))
+    else:
+        os.startfile(str(_ensure_user_config("snippets")))
 
 
 def _on_quit() -> None:
