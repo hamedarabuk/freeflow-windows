@@ -20,6 +20,7 @@ import logging
 import os
 import queue
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -359,6 +360,31 @@ def _match_voice_command(text: str):
     return None
 
 
+def _match_capture_command(text: str):
+    """Return the payload string if text starts with a capture-command trigger phrase, else None.
+
+    The trigger phrase (and any immediately following colon, comma or whitespace)
+    is stripped from the start of the normalised transcript to yield the payload.
+    Returns None when no trigger phrase matches, or an empty string when the
+    utterance contained only the trigger phrase (caller should ignore empty payloads).
+    """
+    normalised = _normalise_cmd(text)
+    for phrase in settings.capture_commands:
+        trigger = _normalise_cmd(str(phrase))
+        if not trigger:
+            continue
+        if normalised == trigger:
+            # Utterance was only the trigger phrase; return empty string so
+            # the caller can skip gracefully.
+            return ""
+        if normalised.startswith(trigger):
+            # Strip trigger plus any leading punctuation / whitespace separator.
+            rest = normalised[len(trigger):]
+            rest = rest.lstrip(" :,")
+            return rest
+    return None
+
+
 def _build_inline_pattern():
     """Return a compiled regex that matches any inline formatting phrase.
 
@@ -485,6 +511,53 @@ def _dispatch(wav_path: Path) -> None:
         log.info(
             "Skipped dispatch: empty transcript (silence/noise/hallucination filter)"
         )
+        if _tray:
+            _tray.set_idle()
+        if _overlay:
+            _overlay.set_state(_post_dispatch_state())
+        return
+
+    # Capture-command check: utterances starting with a capture trigger phrase
+    # (e.g. "content idea ...") are routed to the external capture script and
+    # suppressed from paste entirely.
+    _capture_payload = _match_capture_command(text_raw)
+    if _capture_payload is not None:
+        ms_total_capture = int((time.monotonic() - t_start) * 1000)
+        if _capture_payload:
+            try:
+                subprocess.Popen(
+                    [sys.executable, settings.content_capture_script,
+                     "--source", "voice", "--text", _capture_payload],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                log.info(
+                    "Capture command dispatched: %r -> %r (%dms)",
+                    text_raw, _capture_payload, ms_total_capture,
+                )
+                if _tray:
+                    _tray.notify("Content idea captured.")
+            except Exception as exc:
+                log.warning("Capture command subprocess failed: %s", exc)
+        else:
+            log.info("Capture command: empty payload, skipping.")
+        try:
+            append(
+                mode_auto=mode_auto,
+                mode_forced=mode_forced,
+                language=language,
+                transcript_raw=text_raw,
+                transcript_clean=f"[capture:{_capture_payload}]",
+                app_process=process_name,
+                app_title=window_title,
+                ms_record=ms_record,
+                ms_transcribe=ms_transcribe,
+                ms_cleanup=0,
+                ms_total=ms_total_capture,
+                fallback=False,
+            )
+        except Exception as exc:
+            log.warning("History append failed: %s", exc)
         if _tray:
             _tray.set_idle()
         if _overlay:

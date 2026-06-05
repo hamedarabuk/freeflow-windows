@@ -103,6 +103,20 @@ _DEFAULT_VOICE_COMMANDS: list[dict] = [
                  "send"],                  "action": "key",  "value": "enter"},
 ]
 
+# Capture commands: utterances that START WITH one of these phrases are routed
+# to the content-capture script instead of being pasted.  The trigger phrase
+# (plus any immediately following colon, comma or whitespace) is stripped to
+# yield the payload text sent to the script.
+_DEFAULT_CAPTURE_COMMANDS: list[str] = [
+    "content idea",
+    "content note",
+]
+
+# Absolute path to the Persian CLAW content-capture script.
+_DEFAULT_CONTENT_CAPTURE_SCRIPT: str = (
+    r"D:\01 Projects\Persian CLAW\scripts\content_capture.py"
+)
+
 # Inline formatting commands: recognised anywhere in an utterance (case-insensitive,
 # word-boundary match).  Each entry maps one or more spoken phrases to a number of
 # newlines that should be inserted at that position.
@@ -181,6 +195,15 @@ class DictationSettings:
         "Keep Persian script for Farsi words and English script for English words."
     )
 
+    # Capture commands: list of trigger phrases (normalised, case-insensitive)
+    # whose utterances are routed to content_capture_script rather than pasted.
+    capture_commands: tuple = field(
+        default_factory=lambda: tuple(_DEFAULT_CAPTURE_COMMANDS)
+    )
+
+    # Absolute path to the content-capture script called by capture commands.
+    content_capture_script: str = _DEFAULT_CONTENT_CAPTURE_SCRIPT
+
 
 # ---------------------------------------------------------------------------
 # Loader
@@ -246,6 +269,14 @@ def _load_settings() -> DictationSettings:
     for key in ("codeswitching_preserve", "codeswitching_prompt"):
         if key in raw:
             kwargs[key] = raw[key]
+
+    if "capture_commands" in raw:
+        cmds = raw["capture_commands"]
+        if isinstance(cmds, list):
+            kwargs["capture_commands"] = tuple(str(c) for c in cmds)
+
+    if "content_capture_script" in raw:
+        kwargs["content_capture_script"] = str(raw["content_capture_script"])
 
     return DictationSettings(**kwargs)
 
