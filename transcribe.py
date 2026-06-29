@@ -28,10 +28,32 @@ _SEG_LOGPROB            = settings.seg_logprob
 log = logging.getLogger(__name__)
 
 
-_NOISE_PATTERNS: frozenset[str] = frozenset({
+_BUILTIN_NOISE_PATTERNS: frozenset[str] = frozenset({
     # Exact noise tokens observed in logs; add more as encountered.
     "sleuths", "sibar", "sleuth", "slepeh", "sibila", "sleptimia",
+    # Common Whisper silence/noise hallucination tokens.
+    "thank you", "thanks", "you", "the", ".",
+    "subscribe", "subtitles", "subtitle", "transcribed", "transcription",
+    "www", "http", "copyright",
 })
+
+# Merge with any extra patterns the user has added via settings.json.
+_NOISE_PATTERNS: frozenset[str] = _BUILTIN_NOISE_PATTERNS | frozenset(
+    p.lower().strip() for p in settings.extra_noise_patterns if p.strip()
+)
+
+# Tokens safe to strip as a SINGLE trailing phantom. Deliberately EXCLUDES
+# common English words ("you", "the", "thanks", "thank you", ".") that a user
+# may legitimately end a sentence on. Those are only ever treated as noise when
+# they form the WHOLE burst (see _is_hallucination), never trimmed off the end
+# of otherwise-valid speech. This prevents "send it to you" -> "send it to".
+_TAIL_TRIM_NOISE: frozenset[str] = frozenset({
+    "sleuths", "sibar", "sleuth", "slepeh", "sibila", "sleptimia",
+    "subscribe", "subtitles", "subtitle", "transcribed", "transcription",
+    "www", "http", "copyright",
+}) | frozenset(
+    p.lower().strip() for p in settings.extra_noise_patterns if p.strip()
+)
 
 
 def _is_hallucination(text: str) -> bool:
@@ -195,7 +217,23 @@ def _trim_hallucination_tail(text: str) -> str:
                 )
                 return trimmed
 
-    # 2. Loose tail repeat: cut back to the previous sentence terminator.
+    # 2. Single-occurrence phantom tail token: drop only if it is an
+    # unmistakable garbage token (not a common English word) and not present in
+    # the dictionary (so "Silux" at the end is preserved).
+    last_norm_single = _norm(tokens[-1])
+    if last_norm_single in _TAIL_TRIM_NOISE:
+        from dictionary import get_terms_prompt  # late import to avoid circular
+        terms_prompt = get_terms_prompt().lower()
+        if last_norm_single not in terms_prompt:
+            trimmed = " ".join(tokens[:-1]).rstrip(" ,;").rstrip()
+            if trimmed and len(trimmed) >= len(text) * 0.5:
+                log.info(
+                    "Trimmed single phantom tail token %r (known noise pattern)",
+                    tokens[-1],
+                )
+                return trimmed
+
+    # 3. Loose tail repeat: cut back to the previous sentence terminator.
     tail = [_norm(t) for t in tokens[-4:]]
     has_loop = any(
         tail[i] and tail[i] == tail[i + 1] and len(tail[i]) > 3

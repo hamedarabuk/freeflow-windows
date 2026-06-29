@@ -204,6 +204,16 @@ class DictationSettings:
     # Absolute path to the content-capture script called by capture commands.
     content_capture_script: str = _DEFAULT_CONTENT_CAPTURE_SCRIPT
 
+    # quality_guard.py
+    # "fast"  -> word-count ratio + edit-distance only (default, no extra deps)
+    # "full"  -> also runs cosine similarity via sentence-transformers (optional dep)
+    quality_guard_level: str = "fast"
+
+    # Extra Whisper noise-token patterns beyond the hardcoded set in transcribe.py.
+    # Users can append known phantom tokens here via settings.json so they do not
+    # need to edit source code.
+    extra_noise_patterns: tuple = field(default_factory=tuple)
+
 
 # ---------------------------------------------------------------------------
 # Loader
@@ -277,6 +287,14 @@ def _load_settings() -> DictationSettings:
 
     if "content_capture_script" in raw:
         kwargs["content_capture_script"] = str(raw["content_capture_script"])
+
+    if "quality_guard_level" in raw:
+        kwargs["quality_guard_level"] = str(raw["quality_guard_level"])
+
+    if "extra_noise_patterns" in raw:
+        patterns = raw["extra_noise_patterns"]
+        if isinstance(patterns, list):
+            kwargs["extra_noise_patterns"] = tuple(str(p) for p in patterns)
 
     return DictationSettings(**kwargs)
 

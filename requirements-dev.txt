@@ -1,0 +1,5 @@
+# Development / eval harness dependencies.
+# Not required for production use.
+
+# Eval harness (tests/eval/run_eval.py): WER and CER metrics.
+jiwer>=3.0.0

@@ -1,0 +1,8 @@
+# Optional dependencies for FreeFlow.
+# Install these only if you want the enhanced semantic similarity guard.
+# The default install (requirements.txt) does NOT need any of these.
+
+# quality_guard_level = "full" in settings.json enables cosine-similarity
+# checking via a multilingual sentence-transformer model (~420 MB download
+# on first use, ~10 ms CPU inference per call).
+sentence-transformers>=2.7.0
