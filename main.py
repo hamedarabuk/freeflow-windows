@@ -29,6 +29,7 @@ from typing import Optional
 
 import keyboard
 
+from backup import backup_if_changed
 from config import load_config
 from cleanup import clean
 from dictionary import apply_substitutions
@@ -170,7 +171,11 @@ def _on_open_logs() -> None:
 
 
 def _ensure_user_config(name: str) -> Path:
-    """Return <name>.json from the repo root. If missing, seed from .example."""
+    """Return <name>.json from the repo root. If missing, seed from .example.
+
+    Guard: only creates the file when it is genuinely absent. Never overwrites,
+    truncates, or resets an existing user file.
+    """
     here = Path(__file__).resolve().parent
     target = here / f"{name}.json"
     example = here / f"{name}.json.example"
@@ -826,6 +831,13 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+    # Back up user data files on startup if they exist and differ from the
+    # newest backup. This runs before any editor is opened so no user action
+    # is required to trigger a first backup on a fresh session.
+    _here = Path(__file__).resolve().parent
+    backup_if_changed(_here / "dictionary.json")
+    backup_if_changed(_here / "snippets.json")
 
     _restore_persisted_state()
 

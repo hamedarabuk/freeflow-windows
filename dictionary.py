@@ -20,6 +20,7 @@ import os
 import re
 from pathlib import Path
 
+from backup import backup_if_changed
 from settings import settings
 
 DICT_FILE     = Path(__file__).resolve().parent / "dictionary.json"
@@ -64,7 +65,21 @@ def _load() -> dict:
         )
         return data
     except Exception as exc:
-        log.warning("Failed to load dictionary %s: %s", src, exc)
+        # Keep the last-good in-memory copy so a corrupted or partially-written
+        # file does not silently empty the dictionary mid-session. On first load
+        # (no prior good copy) the cache holds an empty dict, which is safe but
+        # visible in logs.
+        if _cache["mtime"] == -1.0:
+            log.error(
+                "DICTIONARY LOAD FAILED on first read (%s: %s). "
+                "Substitutions disabled until the file is fixed.",
+                src, exc,
+            )
+        else:
+            log.warning(
+                "Failed to reload dictionary %s: %s — keeping previous copy.",
+                src, exc,
+            )
         return _cache["data"]
 
 
@@ -153,3 +168,4 @@ def save_substitutions(mapping: dict) -> None:
     except Exception:
         _cache["mtime"] = -1.0
     log.info("Saved %d substitutions to %s", len(clean), DICT_FILE.name)
+    backup_if_changed(DICT_FILE)

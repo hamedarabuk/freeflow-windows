@@ -18,6 +18,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
+from backup import backup_if_changed
+
 SNIP_FILE    = Path(__file__).resolve().parent / "snippets.json"
 EXAMPLE_FILE = Path(__file__).resolve().parent / "snippets.json.example"
 
@@ -65,7 +67,21 @@ def _load() -> dict:
         )
         return snippets
     except Exception as exc:
-        log.warning("Failed to load snippets %s: %s", src, exc)
+        # Keep the last-good in-memory copy so a corrupted or partially-written
+        # file does not silently empty the snippet table mid-session. On first
+        # load (no prior good copy) the cache holds an empty dict, which is safe
+        # but visible in logs.
+        if _cache["mtime"] == -1.0:
+            log.error(
+                "SNIPPETS LOAD FAILED on first read (%s: %s). "
+                "Voice shortcuts disabled until the file is fixed.",
+                src, exc,
+            )
+        else:
+            log.warning(
+                "Failed to reload snippets %s: %s — keeping previous copy.",
+                src, exc,
+            )
         return _cache["snippets"]
 
 
@@ -130,3 +146,4 @@ def save_snippets(mapping: dict) -> None:
     except Exception:
         _cache["mtime"] = -1.0
     log.info("Saved %d snippets to %s", len(clean), SNIP_FILE.name)
+    backup_if_changed(SNIP_FILE)

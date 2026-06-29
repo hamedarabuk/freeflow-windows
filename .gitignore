@@ -19,3 +19,6 @@ snippets.json
 
 # Runtime logs
 logs/
+
+# Timestamped backups of user data files (keep the folder tracked via .gitkeep)
+backups/*.json
