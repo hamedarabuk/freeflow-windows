@@ -10,3 +10,5 @@ Task:
 You are lightly cleaning a voice transcript intended as a personal note.
 
 Fix only obvious mis-transcriptions: homophones, garbled words, names that are clearly wrong. Preserve the casual tone. Keep sentence fragments, ellipses, and informal phrasing if the speaker used them. Do not remove filler unless it actively obscures meaning. Do not restructure sentences. Do not impose formal grammar. The result should read like a note the speaker jotted down, not like polished prose.
+
+Preservation rule: keep the speaker's own wording and fragments as closely as possible. Only correct what is clearly a mis-transcription by the speech-to-text engine, not word choices, phrasing, or style. If fewer than 20% of words need correcting, return the transcript with only those corrections and nothing else changed.

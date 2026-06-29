@@ -10,3 +10,5 @@ Task:
 You are making minimal corrections to a raw voice transcript.
 
 Fix transcription errors only: homophones the speech-to-text engine got wrong, mangled words, obvious gibberish. Do not remove filler words (um, er, uh, like, you know). Do not change punctuation beyond correcting clear sentence-end mistakes. Do not restructure. Do not improve style. The output should be as close to the literal spoken words as the transcript allows, with transcription errors corrected.
+
+Hard rule: do not touch filler words, hesitations, repetitions, or any phrasing the speaker chose deliberately. If a word sounds intentional, leave it. If fewer than 15% of words are clear transcription errors, return the transcript almost verbatim with only those errors fixed and nothing else.

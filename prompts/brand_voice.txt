@@ -7,7 +7,7 @@ Rules (apply to every response):
 - Output the cleaned text only. No preamble. No "Here is the cleaned-up version:". No markdown wrapping. No explanation.
 
 Task:
-You are shaping a voice transcript into brand-voice copy for Maker's AI Lab or Silux London.
+You are shaping a voice transcript into brand-voice copy for {{brand_name}}.
 
 Brand voice rules:
 - Short sentences. One idea per sentence.

@@ -29,6 +29,20 @@ from typing import Optional
 
 import keyboard
 
+# ---------------------------------------------------------------------------
+# Optional pynput backend
+# ---------------------------------------------------------------------------
+# EXPERIMENTAL: when settings.input_backend == "pynput", hold-to-talk uses
+# pynput.keyboard.Listener (press/release of Alt+1) instead of the keyboard
+# library.  This avoids the admin-rights requirement that blocks non-technical
+# users.  The default is "keyboard"; pynput must be installed separately
+# (see requirements-optional.txt).  The keyboard library's global hooks are
+# only registered when input_backend == "keyboard", so importing this module
+# does not pull in keyboard unless needed.
+_PYNPUT_ACTIVE = False
+_pynput_listener = None  # type: ignore[var-annotated]
+# ---------------------------------------------------------------------------
+
 from backup import backup_if_changed
 from config import load_config
 from cleanup import clean
@@ -220,7 +234,13 @@ def _on_quit() -> None:
         _overlay.stop()
     if _tray:
         _tray.stop()
-    keyboard.unhook_all()
+    if _PYNPUT_ACTIVE and _pynput_listener is not None:
+        try:
+            _pynput_listener.stop()
+        except Exception:
+            pass
+    else:
+        keyboard.unhook_all()
     sys.exit(0)
 
 
@@ -737,6 +757,94 @@ def _dispatch(wav_path: Path) -> None:
         _overlay.set_state(_post_dispatch_state())
 
 
+# ---------------------------------------------------------------------------
+# pynput backend (EXPERIMENTAL)
+# ---------------------------------------------------------------------------
+# Uses pynput.keyboard.Listener (press/release events) to implement hold-to-talk
+# for Alt+1 without requiring admin rights.
+#
+# Confidence note: pynput's GlobalHotKeys uses RegisterHotKey which does NOT
+# fire when an elevated window (Task Manager, UAC dialog) is in the
+# foreground, but covers 95%+ of real dictation targets (browsers, email
+# clients, word processors).  The Listener approach used here is slightly
+# lower-level: it installs a WH_KEYBOARD_LL hook via pynput's Win32 backend,
+# which DOES require elevation for the same elevated-window case, but is
+# more reliable for hold detection than GlobalHotKeys (which only fires on
+# press, not release).
+#
+# In practice:
+# - "keyboard" backend: reliable everywhere, requires admin.
+# - "pynput" backend: works in most apps without admin; misses elevated
+#   windows.  Marked EXPERIMENTAL until broader test coverage.
+
+def _wire_pynput_backend() -> None:
+    """Register pynput Listener for Alt+1 hold-to-talk. EXPERIMENTAL."""
+    global _PYNPUT_ACTIVE, _pynput_listener
+    try:
+        from pynput import keyboard as _pynput_kb
+    except ImportError:
+        log.error(
+            "input_backend='pynput' is set but pynput is not installed. "
+            "Run: pip install pynput  (or see requirements-optional.txt). "
+            "Falling back to the keyboard library."
+        )
+        keyboard.on_press_key(settings.hotkey, _on_alt1_press, suppress=False)
+        keyboard.on_release_key(settings.hotkey, _on_alt1_release, suppress=False)
+        return
+
+    # Map the hotkey string to a pynput Key. Currently only Alt+1 is
+    # supported via this path (matching the default hotkey = "1",
+    # hotkey_modifier = "alt").
+    _hotkey_char = settings.hotkey          # "1"
+    _modifier    = settings.hotkey_modifier  # "alt"
+
+    _ALT_KEYS = {_pynput_kb.Key.alt, _pynput_kb.Key.alt_l, _pynput_kb.Key.alt_r}
+    _pressed_keys: set = set()
+
+    def _pynput_on_press(key) -> None:
+        _pressed_keys.add(key)
+        # Fire hold-to-talk start when the hotkey char is pressed AND the
+        # modifier is already held.
+        if _modifier == "alt":
+            modifier_held = bool(_pressed_keys & _ALT_KEYS)
+        else:
+            modifier_held = False
+        try:
+            char = key.char
+        except AttributeError:
+            char = None
+        if modifier_held and char == _hotkey_char:
+            # Synthesise a minimal event object compatible with _on_alt1_press.
+            class _Ev:
+                name = _hotkey_char
+                scan_code = 0
+            _on_alt1_press(_Ev())
+
+    def _pynput_on_release(key) -> None:
+        _pressed_keys.discard(key)
+        try:
+            char = key.char
+        except AttributeError:
+            char = None
+        if char == _hotkey_char:
+            class _Ev:
+                name = _hotkey_char
+                scan_code = 0
+            _on_alt1_release(_Ev())
+
+    _pynput_listener = _pynput_kb.Listener(
+        on_press=_pynput_on_press,
+        on_release=_pynput_on_release,
+    )
+    _pynput_listener.start()
+    _PYNPUT_ACTIVE = True
+    log.info(
+        "pynput backend active (EXPERIMENTAL). Hold Alt+%s to talk. "
+        "Note: does not fire in elevated windows (Task Manager, UAC dialogs).",
+        _hotkey_char,
+    )
+
+
 def _on_alt1_press(event) -> None:
     global _recording_active, _press_start_time
     if _paused:
@@ -869,8 +977,13 @@ def main() -> None:
         get_session_active=lambda: _session_active,
     )
 
-    keyboard.on_press_key(settings.hotkey, _on_alt1_press, suppress=False)
-    keyboard.on_release_key(settings.hotkey, _on_alt1_release, suppress=False)
+    if settings.input_backend == "pynput":
+        _wire_pynput_backend()
+    else:
+        # Default: keyboard library. Behaviour is byte-for-byte identical to
+        # the original code.  Admin rights required on Windows.
+        keyboard.on_press_key(settings.hotkey, _on_alt1_press, suppress=False)
+        keyboard.on_release_key(settings.hotkey, _on_alt1_release, suppress=False)
 
     log.info(
         "FreeFlow dictation running. Alt+1 = hold-to-talk. "

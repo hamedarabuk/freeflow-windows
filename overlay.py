@@ -64,7 +64,7 @@ FONT_FAMILY = "Segoe UI Variable"
 
 _STATE_FILE = Path(__file__).parent / ".overlay-state.json"
 
-_W = 280
+_W = 300
 _H = 132       # includes the 14px grip bar at the top
 _GRIP_H = 14
 _MARGIN_RIGHT  = 24
@@ -106,6 +106,23 @@ def _save_state(state: dict) -> None:
         pass
 
 
+_MODE_DESCRIPTIONS = {
+    "polished":    "Fix grammar, filler, flow",
+    "brand_voice": "Brand tone, short sentences",
+    "prompt":      "Shape into AI instruction",
+    "note":        "Light touch, keep fragments",
+    "raw":         "Transcription errors only",
+}
+
+_MODE_MENU_LABELS = {
+    "polished":    "Polished  (fix grammar + filler)",
+    "brand_voice": "Brand voice  (short sentences, brand tone)",
+    "prompt":      "Prompt  (shape into AI instruction)",
+    "note":        "Note  (light touch, keep fragments)",
+    "raw":         "Raw  (transcription errors only)",
+}
+
+
 def _format_mode_label(mode: str) -> str:
     return mode.replace("_", " ").upper()
 
@@ -145,6 +162,7 @@ class Overlay:
 
         self._state = "idle"
         self._paused = False
+        self._last_fallback = False  # True when the last dispatch used the raw transcript
         self._menu_top: Optional[ctk.CTkToplevel] = None
 
         self._drag_start_x = 0
@@ -190,6 +208,18 @@ class Overlay:
 
     def set_paused(self, paused: bool) -> None:
         self._paused = paused
+        if self._root:
+            self._root.after(0, self._refresh)
+
+    def set_fallback(self, fallback: bool) -> None:
+        """Signal whether the last dispatch fell back to the raw transcript.
+
+        When True, a small 'RAW' badge is shown in the bottom row so the user
+        can see that cleanup was skipped (e.g. Groq timed out) and the pasted
+        text is the unedited Whisper output.  Cleared automatically on the next
+        successful dispatch.
+        """
+        self._last_fallback = fallback
         if self._root:
             self._root.after(0, self._refresh)
 
@@ -302,6 +332,8 @@ class Overlay:
             corner_radius=6,
             width=28, height=16,
         )  # packed/forgotten by _refresh
+        # Tooltip: hovering the language pill shows what it means.
+        self._lang_pill._canvas.configure(cursor="question_arrow")
 
         # --- Middle row: mode pill button ---
         # Compact: the mode menu is configuration the user reads occasionally,
@@ -358,11 +390,23 @@ class Overlay:
         self._mic_button.pack(side="right", padx=(0, 6))
 
         self._translate_badge = ctk.CTkLabel(
-            bottom, text="⇄ EN",
+            bottom, text="⇄ Translate ON",
             fg_color=BG_TRANSLATE_ON, text_color=FG_TRANSLATE,
             font=(FONT_FAMILY, 9, "bold"),
             corner_radius=6,
-            width=42, height=16,
+            width=90, height=16,
+        )  # packed/forgotten by _refresh
+
+        # Fallback badge: shown briefly after a dispatch that fell back to
+        # the raw Whisper transcript (cleanup timed out or was rejected).
+        # Gives the user confidence that the pasted text is unedited audio
+        # output, not a hallucinated LLM rewrite.
+        self._fallback_badge = ctk.CTkLabel(
+            bottom, text="RAW",
+            fg_color="#7c3aed", text_color="#ede9fe",
+            font=(FONT_FAMILY, 9, "bold"),
+            corner_radius=6,
+            width=32, height=16,
         )  # packed/forgotten by _refresh
 
         # Drag on the grip bar (primary) + other non-interactive children
@@ -444,6 +488,14 @@ class Overlay:
         else:
             if self._translate_badge.winfo_ismapped():
                 self._translate_badge.pack_forget()
+
+        # Fallback badge: visible when the last dispatch used the raw transcript.
+        if self._last_fallback:
+            if not self._fallback_badge.winfo_ismapped():
+                self._fallback_badge.pack(side="right", padx=(0, 4))
+        else:
+            if self._fallback_badge.winfo_ismapped():
+                self._fallback_badge.pack_forget()
 
         # Pause glyph
         self._pause_button.configure(text="▶" if self._paused else "⏸")
@@ -540,7 +592,7 @@ class Overlay:
         menu.overrideredirect(True)
         menu.attributes("-topmost", True)
         menu.configure(fg_color=BG_MENU)
-        menu.geometry(f"{w}x320+{x}+{y}")
+        menu.geometry(f"{w}x360+{x}+{y}")
 
         forced = self._get_forced()
         translate_on = self._get_translate()
@@ -586,16 +638,23 @@ class Overlay:
             self._close_menu()
             self._on_quit()
 
-        _add_item("Auto",         lambda: _pick(None),          active=(forced is None))
+        auto_mode = self._get_auto_mode()
+        auto_label = f"Auto  (now: {auto_mode.replace('_', ' ')})"
+        _add_item(auto_label,     lambda: _pick(None),          active=(forced is None))
         _add_separator()
-        _add_item("Polished",     lambda: _pick("polished"),    active=(forced == "polished"))
-        _add_item("Brand voice",  lambda: _pick("brand_voice"), active=(forced == "brand_voice"))
-        _add_item("Prompt",       lambda: _pick("prompt"),      active=(forced == "prompt"))
-        _add_item("Note",         lambda: _pick("note"),        active=(forced == "note"))
-        _add_item("Raw",          lambda: _pick("raw"),         active=(forced == "raw"))
+        for _m in MODES:
+            _add_item(
+                _MODE_MENU_LABELS.get(_m, _m.replace("_", " ").title()),
+                (lambda m=_m: lambda: _pick(m))(),
+                active=(forced == _m),
+            )
         _add_separator()
         check = "✓ " if translate_on else "    "
-        _add_item(f"{check}Translate to British English", _toggle_t, active=translate_on)
+        _add_item(
+            f"{check}Translate to British English",
+            _toggle_t,
+            active=translate_on,
+        )
         _add_separator()
         _add_item("Hide gadget", _hide)
         _add_item("Quit dictation service", _quit)

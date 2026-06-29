@@ -103,10 +103,23 @@ log = logging.getLogger(__name__)
 def _load_prompt(mode: str) -> str:
     path = PROMPTS_DIR / f"{mode}.txt"
     if path.exists():
-        return path.read_text(encoding="utf-8").strip()
-    log.warning("Prompt file missing for mode %r, falling back to polished", mode)
-    fallback = PROMPTS_DIR / "polished.txt"
-    return fallback.read_text(encoding="utf-8").strip() if fallback.exists() else ""
+        text = path.read_text(encoding="utf-8").strip()
+    else:
+        log.warning("Prompt file missing for mode %r, falling back to polished", mode)
+        fallback = PROMPTS_DIR / "polished.txt"
+        text = fallback.read_text(encoding="utf-8").strip() if fallback.exists() else ""
+
+    # Inject brand identity into brand_voice mode.
+    # {{brand_name}} is replaced with settings.brand_name (default: "the user's brand").
+    # If brand_voice_notes is set, it is appended as extra guidance.
+    if mode == "brand_voice":
+        brand_name = settings.brand_name or "the user's brand"
+        text = text.replace("{{brand_name}}", brand_name)
+        notes = (settings.brand_voice_notes or "").strip()
+        if notes:
+            text = text + "\n\nAdditional brand guidance:\n" + notes
+
+    return text
 
 
 def _call_groq(

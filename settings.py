@@ -204,6 +204,20 @@ class DictationSettings:
     # Absolute path to the content-capture script called by capture commands.
     content_capture_script: str = _DEFAULT_CONTENT_CAPTURE_SCRIPT
 
+    # brand_voice mode: brand identity injected into prompts/brand_voice.txt.
+    # brand_name replaces {{brand_name}} in the prompt template.
+    # brand_voice_notes is appended as extra brand guidance (optional, can be empty).
+    # When unset, brand_name defaults to "the user's brand" so the mode is portable.
+    brand_name: str = "the user's brand"
+    brand_voice_notes: str = ""
+
+    # Input backend: "keyboard" (default, requires admin rights, uses the
+    # keyboard lib) or "pynput" (no admin required, uses pynput.keyboard;
+    # see requirements-optional.txt).
+    # DEFAULT MUST remain "keyboard" to preserve the existing hold-to-talk
+    # behaviour byte-for-byte for all existing users.
+    input_backend: str = "keyboard"
+
     # quality_guard.py
     # "fast"  -> word-count ratio + edit-distance only (default, no extra deps)
     # "full"  -> also runs cosine similarity via sentence-transformers (optional dep)
@@ -290,6 +304,10 @@ def _load_settings() -> DictationSettings:
 
     if "quality_guard_level" in raw:
         kwargs["quality_guard_level"] = str(raw["quality_guard_level"])
+
+    for key in ("brand_name", "brand_voice_notes", "input_backend"):
+        if key in raw:
+            kwargs[key] = str(raw[key])
 
     if "extra_noise_patterns" in raw:
         patterns = raw["extra_noise_patterns"]
