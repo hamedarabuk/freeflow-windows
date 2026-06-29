@@ -754,6 +754,9 @@ def _dispatch(wav_path: Path) -> None:
     if _tray:
         _tray.set_idle()
     if _overlay:
+        # Surface the RAW badge when cleanup fell back to the unedited
+        # transcript, so the user can see the paste is raw Whisper output.
+        _overlay.set_fallback(fallback)
         _overlay.set_state(_post_dispatch_state())
 
 
