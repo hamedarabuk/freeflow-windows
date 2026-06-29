@@ -18,18 +18,30 @@ Most AI dictation tools pipe transcripts through Claude or GPT-4 for cleanup, wh
 
 ---
 
-## Install
+## Easy install (no Python needed)
+
+This is the recommended path for members of the Maker's AI Lab community.
+
+1. Download `FreeFlow-Setup.exe` from the [Releases page](https://github.com/hamedarabuk/freeflow-windows/releases).
+2. Double-click the installer. Windows may show a SmartScreen warning because the file is not yet code-signed. Click **More info**, then **Run anyway**. (See [INSTALL.md](INSTALL.md) for a screenshot walkthrough.)
+3. On first launch, a small setup dialog asks for your Groq API key. Get one free (no credit card) at [console.groq.com](https://console.groq.com). Paste it in and click **Save**. Done.
+
+A system tray icon appears and a small floating gadget sits at the bottom-right of your screen. Hold `Alt+1` to dictate.
+
+---
+
+## Developer install (from source)
 
 ```powershell
 git clone https://github.com/hamedarabuk/freeflow-windows.git
 cd freeflow-windows
 pip install -r requirements.txt
-copy .env.example .env
-# Edit .env and paste your Groq API key (free at https://console.groq.com)
 python main.py
 ```
 
 The `keyboard` library hooks into the global Windows input stream and needs administrator rights. Run the service from an elevated PowerShell prompt, or grant UAC elevation on first run.
+
+On first run, if no Groq API key is found in the environment, a setup dialog appears automatically. The key is stored in `%APPDATA%\FreeFlow\config.json`. Alternatively, create a `.env` file at the repo root with `GROQ_API_KEY=your_key_here`.
 
 A system tray icon appears and a small floating gadget sits at the bottom-right of your screen. The service listens for `Alt+1` in the background.
 
@@ -86,6 +98,14 @@ Two files give you full control without editing code:
 
 - **`dictionary.json`** (copy from `dictionary.json.example`): brand names, technical jargon, anything Whisper guesses wrong. Plus a case-insensitive find-and-replace map applied after transcription. Reloads automatically when you save.
 - **`snippets.json`** (copy from `snippets.json.example`): voice shortcuts. Dictate the cue, the expansion is pasted instantly, LLM cleanup is skipped. Use for Calendly links, email sign-offs, canned intros. Reloads automatically.
+
+Three additional settings in `settings.json` are worth knowing:
+
+| Key | Default | What it does |
+|---|---|---|
+| `quality_guard_level` | `"fast"` | `"fast"` uses word-count and edit-distance checks only. `"full"` adds cosine similarity (requires `sentence-transformers` from `requirements-optional.txt`). |
+| `brand_name` | `"the user's brand"` | Your brand name, injected into the `brand_voice` mode prompt. Set this to your actual brand name (e.g. `"Silux London"`). |
+| `input_backend` | `"keyboard"` | `"keyboard"` (default) requires admin rights. `"pynput"` is an experimental no-admin alternative; install `pynput` from `requirements-optional.txt` first. |
 
 For deeper changes:
 
