@@ -27,3 +27,4 @@ backups/*.json
 build/
 dist/
 *.zip
+installer/Output/

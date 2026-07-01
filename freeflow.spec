@@ -52,15 +52,13 @@ a = Analysis(
         'win32con',
         'win32gui',
     ],
-    hookspath=[],
+    # Local hooks/ overrides the broken pyinstaller-hooks-contrib webrtcvad
+    # hook (see hooks/hook-webrtcvad.py). This re-enables session mode in the
+    # packaged build.
+    hookspath=['hooks'],
     hooksconfig={},
     runtime_hooks=[],
-    # webrtcvad powers only the optional session mode. Its PyInstaller
-    # contrib hook is broken in this toolchain, and vad.py already imports it
-    # lazily and shows a toast if it is absent, so excluding it keeps the core
-    # hold-to-talk build working. Session mode is unavailable in the packaged
-    # build until the hook is fixed; it still works from a source install.
-    excludes=['webrtcvad'],
+    excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
