@@ -17,9 +17,11 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
+from paths import user_data_dir
+
 log = logging.getLogger(__name__)
 
-_BACKUP_DIR = Path(__file__).resolve().parent / "backups"
+_BACKUP_DIR = user_data_dir() / "backups"
 MAX_BACKUPS = 10
 
 

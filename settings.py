@@ -14,11 +14,11 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
-_HERE = Path(__file__).resolve().parent
-_SETTINGS_FILE = _HERE / "settings.json"
+from paths import user_file
+
+_SETTINGS_FILE = user_file("settings.json")
 
 log = logging.getLogger(__name__)
 

@@ -43,6 +43,10 @@ _PYNPUT_ACTIVE = False
 _pynput_listener = None  # type: ignore[var-annotated]
 # ---------------------------------------------------------------------------
 
+from paths import user_file, resource_file, migrate_legacy_user_data
+
+migrate_legacy_user_data()
+
 from backup import backup_if_changed
 from config import load_config
 from cleanup import clean
@@ -185,14 +189,14 @@ def _on_open_logs() -> None:
 
 
 def _ensure_user_config(name: str) -> Path:
-    """Return <name>.json from the repo root. If missing, seed from .example.
+    """Return <name>.json from the stable per-user data directory. If missing,
+    seed from the bundled .example resource.
 
     Guard: only creates the file when it is genuinely absent. Never overwrites,
     truncates, or resets an existing user file.
     """
-    here = Path(__file__).resolve().parent
-    target = here / f"{name}.json"
-    example = here / f"{name}.json.example"
+    target = user_file(f"{name}.json")
+    example = resource_file(f"{name}.json.example")
     if not target.exists() and example.exists():
         try:
             target.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
@@ -946,9 +950,8 @@ def main() -> None:
     # Back up user data files on startup if they exist and differ from the
     # newest backup. This runs before any editor is opened so no user action
     # is required to trigger a first backup on a fresh session.
-    _here = Path(__file__).resolve().parent
-    backup_if_changed(_here / "dictionary.json")
-    backup_if_changed(_here / "snippets.json")
+    backup_if_changed(user_file("dictionary.json"))
+    backup_if_changed(user_file("snippets.json"))
 
     _restore_persisted_state()
 

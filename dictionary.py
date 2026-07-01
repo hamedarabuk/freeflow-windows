@@ -21,10 +21,11 @@ import re
 from pathlib import Path
 
 from backup import backup_if_changed
+from paths import user_file, resource_file
 from settings import settings
 
-DICT_FILE     = Path(__file__).resolve().parent / "dictionary.json"
-EXAMPLE_FILE  = Path(__file__).resolve().parent / "dictionary.json.example"
+DICT_FILE     = user_file("dictionary.json")
+EXAMPLE_FILE  = resource_file("dictionary.json.example")
 
 _MAX_PROMPT_CHARS = settings.max_prompt_chars
 

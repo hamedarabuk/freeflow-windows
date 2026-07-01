@@ -19,9 +19,10 @@ from pathlib import Path
 from typing import Optional
 
 from backup import backup_if_changed
+from paths import user_file, resource_file
 
-SNIP_FILE    = Path(__file__).resolve().parent / "snippets.json"
-EXAMPLE_FILE = Path(__file__).resolve().parent / "snippets.json.example"
+SNIP_FILE    = user_file("snippets.json")
+EXAMPLE_FILE = resource_file("snippets.json.example")
 
 log = logging.getLogger(__name__)
 
