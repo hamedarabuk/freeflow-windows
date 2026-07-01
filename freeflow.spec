@@ -83,8 +83,13 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    uac_admin=True,         # Requests elevation for the keyboard backend.
-                            # Set False for a pynput no-admin build.
+    uac_admin=False,        # No elevation: keeps install, launch, and login
+                            # autostart free of any UAC prompt for members.
+                            # The keyboard low-level hook works without admin
+                            # for normal (non-elevated) target apps; it simply
+                            # will not fire while an elevated window is focused,
+                            # which is a non-issue for dictation. Set True only
+                            # if a user needs the hotkey inside elevated apps.
     # icon='assets/freeflow.ico',   # Uncomment once you have a branded icon.
 )
 

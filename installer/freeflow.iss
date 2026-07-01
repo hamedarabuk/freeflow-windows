@@ -78,7 +78,9 @@ Source: "..\dist\FreeFlow\*"; DestDir: "{app}"; Flags: ignoreversion recursesubd
 ; Start Menu shortcut.
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 ; Desktop shortcut (only if user ticked the task above).
-Name: "{commondesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; \
+; {autodesktop} resolves to the per-user desktop under a non-admin install,
+; so it never hits the Access-denied error on C:\Users\Public\Desktop.
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; \
   Tasks: desktopicon
 
 [Registry]
