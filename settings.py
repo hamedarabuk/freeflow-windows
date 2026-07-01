@@ -154,6 +154,16 @@ class DictationSettings:
     seg_no_speech: float = 0.6
     seg_compression: float = 2.0
     seg_logprob: float = -2.0
+    # Language handling for Whisper transcription.
+    # "auto" (default) detects the language per utterance from the audio.
+    # A forced ISO code ("en", "fa", ...) is passed to Whisper as the
+    # `language` parameter and guarantees that language regardless of accent.
+    dictation_language: str = "auto"
+    # When True, the dictionary "terms" glossary is sent to Whisper as a bias
+    # prompt to improve name spelling. OFF by default: a glossary of non-English
+    # proper nouns can flip Whisper's language auto-detection (accented English
+    # transcribed as Persian). Substitutions still fix mis-hearings afterwards.
+    whisper_glossary_bias: bool = False
 
     # cleanup.py
     cleanup_model: str = "llama-3.3-70b-versatile"
@@ -304,6 +314,12 @@ def _load_settings() -> DictationSettings:
 
     if "quality_guard_level" in raw:
         kwargs["quality_guard_level"] = str(raw["quality_guard_level"])
+
+    if "dictation_language" in raw:
+        kwargs["dictation_language"] = str(raw["dictation_language"])
+
+    if "whisper_glossary_bias" in raw:
+        kwargs["whisper_glossary_bias"] = bool(raw["whisper_glossary_bias"])
 
     for key in ("brand_name", "brand_voice_notes", "input_backend"):
         if key in raw:

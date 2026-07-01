@@ -265,9 +265,20 @@ def transcribe(wav_path: Path, api_key: str) -> tuple[str, str]:
         "model": MODEL,
         "response_format": "verbose_json",
     }
-    prompt = get_terms_prompt()
-    if prompt:
-        data["prompt"] = prompt
+    # Glossary bias is OFF by default: sending a list of (often Persian) proper
+    # nouns as the Whisper prompt can flip language auto-detection to Persian
+    # for accented English speech, mis-transcribing English as Persian.
+    # Substitutions in dictionary.json still fix known mis-hearings afterwards.
+    if settings.whisper_glossary_bias:
+        prompt = get_terms_prompt()
+        if prompt:
+            data["prompt"] = prompt
+
+    # Optional hard language lock (settings.dictation_language: auto|en|fa|...).
+    lang = (settings.dictation_language or "auto").strip().lower()
+    if lang and lang != "auto":
+        data["language"] = lang
+
     with open(wav_path, "rb") as f:
         response = requests.post(
             GROQ_AUDIO_URL,
