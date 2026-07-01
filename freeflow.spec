@@ -24,21 +24,26 @@ from PyInstaller.utils.hooks import collect_data_files
 
 block_cipher = None
 
+_datas = [
+    # Prompt templates (cleanup instructions per mode)
+    ('prompts', 'prompts'),
+    # User-config example files — seeded into the install folder so
+    # users can inspect the schema without reading source code.
+    ('dictionary.json.example', '.'),
+    ('snippets.json.example', '.'),
+    ('settings.json.example', '.'),
+    # Version manifest — read by updater.py at dev/test time.
+    ('version.json', '.'),
+]
+# customtkinter ships JSON themes and image assets that must be bundled, or the
+# built app crashes on launch with a missing-theme error.
+_datas += collect_data_files('customtkinter')
+
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[
-        # Prompt templates (cleanup instructions per mode)
-        ('prompts', 'prompts'),
-        # User-config example files — seeded into the install folder so
-        # users can inspect the schema without reading source code.
-        ('dictionary.json.example', '.'),
-        ('snippets.json.example', '.'),
-        ('settings.json.example', '.'),
-        # Version manifest — read by updater.py at dev/test time.
-        ('version.json', '.'),
-    ],
+    datas=_datas,
     hiddenimports=[
         # pystray enumerates backends at runtime; include all Windows variants.
         'pystray._win32',
@@ -46,13 +51,16 @@ a = Analysis(
         'win32api',
         'win32con',
         'win32gui',
-        # webrtcvad wheels are loaded dynamically inside vad.py.
-        'webrtcvad',
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # webrtcvad powers only the optional session mode. Its PyInstaller
+    # contrib hook is broken in this toolchain, and vad.py already imports it
+    # lazily and shows a toast if it is absent, so excluding it keeps the core
+    # hold-to-talk build working. Session mode is unavailable in the packaged
+    # build until the hook is fixed; it still works from a source install.
+    excludes=['webrtcvad'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
