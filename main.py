@@ -939,7 +939,33 @@ def _on_alt1_release(event) -> None:
     threading.Thread(target=_dispatch, args=(wav,), daemon=True).start()
 
 
+_singleton_mutex = None  # named mutex kept alive for the whole process lifetime
+
+
+def _ensure_single_instance() -> None:
+    """Exit immediately if another FreeFlow instance is already running.
+
+    Login-autostart launches FreeFlow at logon; if the user then also clicks
+    the icon, a second copy would start and both would hook Alt+1, producing
+    double pastes. A per-session named mutex makes the second launch detect the
+    first and exit cleanly. If pywin32 is unavailable the guard is skipped
+    rather than blocking startup.
+    """
+    global _singleton_mutex
+    try:
+        import win32event
+        import win32api
+        import winerror
+    except Exception:
+        return
+    _singleton_mutex = win32event.CreateMutex(None, False, "FreeFlow-SingleInstance")
+    if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
+        log.warning("FreeFlow is already running; exiting this second instance.")
+        sys.exit(0)
+
+
 def main() -> None:
+    _ensure_single_instance()
     if not _cfg.groq_api_key:
         print(
             "ERROR: GROQ_API_KEY is not set. Add it to .env at the repo root.",
