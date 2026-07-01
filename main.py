@@ -219,6 +219,20 @@ def _on_edit_dictionary() -> None:
         os.startfile(str(_ensure_user_config("dictionary")))
 
 
+def _on_about() -> None:
+    # Runs on the pystray tray thread. Creating a Tk/CTk window here would
+    # crash the app, so marshal the open onto the main Tk loop via the
+    # overlay's root.after(). Fall back to the website only if no root yet.
+    root = _overlay.tk_root if _overlay else None
+    if root is not None:
+        from about_window import open_about_window
+        root.after(0, lambda: open_about_window(root))
+    else:
+        import webbrowser
+        from about import WEBSITE_URL
+        webbrowser.open(WEBSITE_URL)
+
+
 def _on_edit_snippets() -> None:
     # Runs on the pystray tray thread. Creating a Tk/CTk window here would
     # crash the app, so marshal the open onto the main Tk loop via the
@@ -981,6 +995,12 @@ def main() -> None:
 
     _restore_persisted_state()
 
+    try:
+        from welcome import show_welcome_once
+        show_welcome_once()
+    except Exception as exc:
+        log.warning("Welcome dialog skipped: %s", exc)
+
     global _tray, _overlay
     _tray = TrayIcon(
         on_pause_toggle=_on_pause_toggle,
@@ -991,6 +1011,7 @@ def main() -> None:
         on_show_gadget=_on_show_gadget,
         on_edit_dictionary=_on_edit_dictionary,
         on_edit_snippets=_on_edit_snippets,
+        on_about=_on_about,
     )
     _tray.start()
 

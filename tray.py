@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import os
 import threading
+import webbrowser
 from typing import Callable, Optional
 
 from PIL import Image, ImageDraw
 import pystray
+
+from about import SUPPORT_EMAIL, WEBSITE_URL
 
 ICON_SIZE = 16
 
@@ -41,6 +44,7 @@ class TrayIcon:
         on_show_gadget: Optional[Callable[[], None]] = None,
         on_edit_dictionary: Optional[Callable[[], None]] = None,
         on_edit_snippets: Optional[Callable[[], None]] = None,
+        on_about: Optional[Callable[[], None]] = None,
     ) -> None:
         self._on_pause_toggle = on_pause_toggle
         self._on_force_mode = on_force_mode
@@ -50,6 +54,7 @@ class TrayIcon:
         self._on_show_gadget = on_show_gadget
         self._on_edit_dictionary = on_edit_dictionary
         self._on_edit_snippets = on_edit_snippets
+        self._on_about = on_about
         self._paused = False
         self._icon: Optional[pystray.Icon] = None
         self._lock = threading.Lock()
@@ -95,6 +100,22 @@ class TrayIcon:
         items.extend([
             pystray.MenuItem("Show last 10", lambda _: self._on_show_last()),
             pystray.MenuItem("Open log folder", lambda _: self._on_open_logs()),
+            pystray.Menu.SEPARATOR,
+        ])
+        if self._on_about is not None:
+            items.append(
+                pystray.MenuItem("About FreeFlow", lambda _: self._on_about())
+            )
+        items.extend([
+            pystray.MenuItem(
+                "Help and updates", lambda _: webbrowser.open(WEBSITE_URL)
+            ),
+            pystray.MenuItem(
+                "Report an issue",
+                lambda _: webbrowser.open(
+                    f"mailto:{SUPPORT_EMAIL}?subject=FreeFlow issue"
+                ),
+            ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit dictation service", lambda _: self._on_quit()),
         ])
