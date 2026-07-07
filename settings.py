@@ -266,6 +266,14 @@ class DictationSettings:
     # transcribed as Persian). Substitutions still fix mis-hearings afterwards.
     whisper_glossary_bias: bool = False
 
+    # transcribe_local.py — optional offline fallback via faster-whisper. Only
+    # engaged when the Groq HTTP call fails with a network-class error
+    # (connection error, timeout, DNS) AND the optional faster-whisper package
+    # is installed (see requirements-optional.txt). Strictly optional: without
+    # the package installed, behaviour is unchanged regardless of this flag.
+    offline_fallback_enabled: bool = True
+    local_whisper_model: str = "small"
+
     # cleanup.py
     cleanup_model: str = "llama-3.3-70b-versatile"
     cleanup_timeout_s: float = 2.0
@@ -450,6 +458,7 @@ def _load_settings() -> DictationSettings:
         "cleanup_timeout_translate_s",
         "cleanup_timeout_per_100_chars_s",
         "max_prompt_chars",
+        "local_whisper_model",
     ]
     for key in scalar_keys:
         if key in raw and key not in invalid_keys:
@@ -495,6 +504,9 @@ def _load_settings() -> DictationSettings:
 
     if "whisper_glossary_bias" in raw:
         kwargs["whisper_glossary_bias"] = bool(raw["whisper_glossary_bias"])
+
+    if "offline_fallback_enabled" in raw:
+        kwargs["offline_fallback_enabled"] = bool(raw["offline_fallback_enabled"])
 
     for key in ("brand_name", "brand_voice_notes", "input_backend"):
         if key in raw:

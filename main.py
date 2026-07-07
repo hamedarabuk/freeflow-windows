@@ -60,6 +60,7 @@ from recorder import Recorder
 from router import pick_mode, _get_foreground_info
 from snippets import expand_snippet
 from settings import settings, set_dictation_language
+import transcribe as _transcribe_module
 from transcribe import transcribe
 from tray import TrayIcon
 from overlay import Overlay, load_state as _load_overlay_state
@@ -830,7 +831,7 @@ def _stage_transcribe(ctx: _DispatchContext) -> Optional[_Outcome]:
     """Transcribe the burst. Terminal on failure (badge cleared, failure
     toast) or on an empty transcript (silence/noise/hallucination filter).
     Otherwise stores the transcript on *ctx* and returns None to continue."""
-    global _detected_language
+    global _detected_language, _last_offline_toast_ts
     try:
         text_raw, language = transcribe(ctx.wav_path, _cfg.groq_api_key)
     except Exception as exc:
@@ -846,6 +847,12 @@ def _stage_transcribe(ctx: _DispatchContext) -> Optional[_Outcome]:
     _detected_language = (language or "")[:2].lower()
     ctx.language = language
     ctx.text_raw = text_raw
+
+    if _transcribe_module.last_call_used_offline:
+        now = time.monotonic()
+        if _tray and now - _last_offline_toast_ts >= _OFFLINE_TOAST_INTERVAL_S:
+            _last_offline_toast_ts = now
+            _tray.notify("Offline transcription")
 
     ctx.t_transcribe_end = time.monotonic()
     ctx.ms_transcribe = int((ctx.t_transcribe_end - ctx.t_rec_end) * 1000)
@@ -1113,6 +1120,12 @@ def _stage_cleanup_and_paste(ctx: _DispatchContext) -> _Outcome:
 # minutes is informative without being spam.
 _FALLBACK_TOAST_INTERVAL_S = 600.0
 _last_fallback_toast_ts: float = 0.0
+
+# Offline-transcription toast throttle: separate timestamp from the cleanup
+# fallback above, same one-per-ten-minutes reasoning (a run of network drops
+# would otherwise spam a toast per burst).
+_OFFLINE_TOAST_INTERVAL_S = 600.0
+_last_offline_toast_ts: float = 0.0
 
 
 def _finalise(outcome: _Outcome) -> None:

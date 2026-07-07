@@ -14,6 +14,7 @@ import logging
 import requests
 from pathlib import Path
 
+import transcribe_local
 from dictionary import get_terms_prompt, apply_substitutions
 from settings import settings
 
@@ -26,6 +27,12 @@ _SEG_COMPRESSION        = settings.seg_compression
 _SEG_LOGPROB            = settings.seg_logprob
 
 log = logging.getLogger(__name__)
+
+# Set True on the branch of the most recent transcribe() call that fell back
+# to local (offline) transcription; reset False at the top of every call.
+# main.py reads this straight after calling transcribe() to drive the
+# "Offline transcription" tray toast.
+last_call_used_offline: bool = False
 
 
 _BUILTIN_NOISE_PATTERNS: frozenset[str] = frozenset({
@@ -260,7 +267,15 @@ def transcribe(wav_path: Path, api_key: str) -> tuple[str, str]:
     """Upload WAV to Groq Whisper and return (text, language).
 
     Returns an empty text when the burst is silence/noise so the caller
-    skips the cleanup + paste round-trip."""
+    skips the cleanup + paste round-trip.
+
+    A network-class failure (connection error, timeout, DNS) falls back to
+    local transcription via faster-whisper when settings.offline_fallback_enabled
+    is True and the optional package is installed; an HTTP error response
+    (4xx/5xx) means Groq is reachable and does NOT fall back."""
+    global last_call_used_offline
+    last_call_used_offline = False
+
     data = {
         "model": MODEL,
         "response_format": "verbose_json",
@@ -279,16 +294,25 @@ def transcribe(wav_path: Path, api_key: str) -> tuple[str, str]:
     if lang and lang != "auto":
         data["language"] = lang
 
-    with open(wav_path, "rb") as f:
-        response = requests.post(
-            GROQ_AUDIO_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
-            files={"file": (wav_path.name, f, "audio/wav")},
-            data=data,
-            timeout=TIMEOUT_S,
-        )
-    response.raise_for_status()
-    payload = response.json()
+    try:
+        with open(wav_path, "rb") as f:
+            response = requests.post(
+                GROQ_AUDIO_URL,
+                headers={"Authorization": f"Bearer {api_key}"},
+                files={"file": (wav_path.name, f, "audio/wav")},
+                data=data,
+                timeout=TIMEOUT_S,
+            )
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        if not (settings.offline_fallback_enabled and transcribe_local.is_available()):
+            raise
+        log.warning("Groq unreachable, using local transcription: %s", exc)
+        payload = transcribe_local.transcribe_local(wav_path, lang)
+        last_call_used_offline = True
+    else:
+        response.raise_for_status()
+        payload = response.json()
+
     language: str = payload.get("language", "en")
 
     avg_nsp = _avg_no_speech_prob(payload)

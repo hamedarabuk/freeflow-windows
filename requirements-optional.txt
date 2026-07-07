@@ -11,3 +11,9 @@ sentence-transformers>=2.7.0
 # hold-to-talk path (EXPERIMENTAL). Does not replace the keyboard library
 # for the default path.
 pynput>=1.7.0
+
+# offline_fallback_enabled = true (default) in settings.json enables local
+# transcription via faster-whisper when the Groq HTTP call fails with a
+# network-class error (connection error, timeout, DNS). Optional, ~460 MB
+# model download on first use.
+faster-whisper>=1.0.0
