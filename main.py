@@ -24,6 +24,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -589,51 +590,134 @@ def _paste_with_breaks(text: str) -> None:
             keyboard.send("enter")
 
 
-def _dispatch(wav_path: Path) -> None:
-    global _detected_language
-    t_start = time.monotonic()
+# ---------------------------------------------------------------------------
+# Dispatch pipeline
+# ---------------------------------------------------------------------------
+# _dispatch runs a fixed sequence of stages against one recorded burst. Each
+# stage inspects the shared _DispatchContext and either returns None (meaning
+# "not my branch, carry on") or an _Outcome (a terminal result). The first
+# stage to return an _Outcome wins; the cleanup stage always returns one, so
+# every dispatch ends with exactly one _Outcome. That single outcome flows
+# through _finalise(), which owns the tray + overlay state reset. Previously
+# every branch reset the tray and overlay itself, and fixes to one branch kept
+# missing the others (the recurring source of the badge/state regressions).
+# Centralising the reset here means it happens once, the same way, always.
 
-    if _tray:
-        _tray.set_processing()
-    if _overlay:
-        _overlay.set_state("processing")
 
-    process_name, window_title = _get_foreground_info()
-    mode_auto = pick_mode(process_name, window_title)
+@dataclass
+class _DispatchContext:
+    """Mutable per-dispatch state, threaded through the pipeline stages.
+
+    One instance lives for the duration of a single _dispatch call on the
+    calling thread only, so it needs no locking of its own. The forced-mode
+    and translate globals it snapshots are still read under their existing
+    locks in _resolve_context."""
+
+    wav_path: Path
+    t_start: float
+    process_name: str = ""
+    window_title: str = ""
+    mode_auto: str = "polished"
+    mode_forced: Optional[str] = None
+    effective_mode: str = "polished"
+    translate_flag: bool = False
+    ms_record: int = 0
+    ms_transcribe: int = 0
+    language: str = ""
+    text_raw: str = ""
+    t_rec_end: float = 0.0
+    t_transcribe_end: float = 0.0
+
+
+@dataclass
+class _Outcome:
+    """Terminal result of the pipeline. Carries only what _finalise needs.
+
+    kind is a short label for logs and tests. tray_notify, when set, is a
+    balloon shown straight after the idle reset (used for the transcription
+    failure path). fallback_badge drives the overlay RAW badge."""
+
+    kind: str
+    tray_notify: Optional[str] = None
+    fallback_badge: bool = False
+
+
+def _append_history(
+    ctx: _DispatchContext,
+    *,
+    transcript_clean: str,
+    ms_cleanup: int,
+    ms_total: int,
+    fallback: bool,
+) -> None:
+    """Write one dictation history record. The invariant fields come from
+    *ctx*; only transcript_clean, the cleanup latency, the total latency and
+    the fallback flag vary per branch. Wrapped exactly as each branch wrapped
+    it before, so a logging failure never breaks the paste path."""
+    try:
+        append(
+            mode_auto=ctx.mode_auto,
+            mode_forced=ctx.mode_forced,
+            language=ctx.language,
+            transcript_raw=ctx.text_raw,
+            transcript_clean=transcript_clean,
+            app_process=ctx.process_name,
+            app_title=ctx.window_title,
+            ms_record=ctx.ms_record,
+            ms_transcribe=ctx.ms_transcribe,
+            ms_cleanup=ms_cleanup,
+            ms_total=ms_total,
+            fallback=fallback,
+        )
+    except Exception as exc:
+        log.warning("History append failed: %s", exc)
+
+
+def _resolve_context(ctx: _DispatchContext) -> None:
+    """Populate the routing and record-latency fields on *ctx*.
+
+    Reads the forced-mode and translate globals under their existing locks;
+    the critical sections stay exactly as narrow as before (a single guarded
+    read each)."""
+    ctx.process_name, ctx.window_title = _get_foreground_info()
+    ctx.mode_auto = pick_mode(ctx.process_name, ctx.window_title)
 
     # Persistent override (v2): do NOT clear _forced_mode after the dispatch.
     with _forced_mode_lock:
-        mode_forced = _forced_mode
+        ctx.mode_forced = _forced_mode
 
-    effective_mode = mode_forced if mode_forced else mode_auto
+    ctx.effective_mode = ctx.mode_forced if ctx.mode_forced else ctx.mode_auto
 
     with _translate_lock:
-        translate_flag = _translate_to_english
+        ctx.translate_flag = _translate_to_english
 
-    t_rec_end = time.monotonic()
-    ms_record = int((t_rec_end - t_start) * 1000)
+    ctx.t_rec_end = time.monotonic()
+    ctx.ms_record = int((ctx.t_rec_end - ctx.t_start) * 1000)
 
+
+def _stage_transcribe(ctx: _DispatchContext) -> Optional[_Outcome]:
+    """Transcribe the burst. Terminal on failure (badge cleared, failure
+    toast) or on an empty transcript (silence/noise/hallucination filter).
+    Otherwise stores the transcript on *ctx* and returns None to continue."""
+    global _detected_language
     try:
-        text_raw, language = transcribe(wav_path, _cfg.groq_api_key)
+        text_raw, language = transcribe(ctx.wav_path, _cfg.groq_api_key)
     except Exception as exc:
         log.error("Transcription failed: %s", exc)
-        if _tray:
-            _tray.set_idle()
-            _tray.notify("Transcription failed.")
-        if _overlay:
-            _overlay.set_state(_post_dispatch_state())
-        return
+        return _Outcome(kind="transcribe_error", tray_notify="Transcription failed.")
     finally:
         try:
-            wav_path.unlink(missing_ok=True)
+            ctx.wav_path.unlink(missing_ok=True)
         except Exception:
             pass
 
     # Track detected language for the overlay's language pill.
     _detected_language = (language or "")[:2].lower()
+    ctx.language = language
+    ctx.text_raw = text_raw
 
-    t_transcribe_end = time.monotonic()
-    ms_transcribe = int((t_transcribe_end - t_rec_end) * 1000)
+    ctx.t_transcribe_end = time.monotonic()
+    ctx.ms_transcribe = int((ctx.t_transcribe_end - ctx.t_rec_end) * 1000)
 
     # Empty transcript means transcribe() dropped a silent or hallucinated
     # burst. Skip the cleanup + paste round-trip and return to idle.
@@ -641,161 +725,125 @@ def _dispatch(wav_path: Path) -> None:
         log.info(
             "Skipped dispatch: empty transcript (silence/noise/hallucination filter)"
         )
-        if _tray:
-            _tray.set_idle()
-        if _overlay:
-            _overlay.set_state(_post_dispatch_state())
-        return
+        return _Outcome(kind="empty_transcript")
 
-    # Capture-command check: utterances starting with a capture trigger phrase
-    # (e.g. "content idea ...") are routed to the external capture script and
-    # suppressed from paste entirely.
-    _capture_payload = _match_capture_command(text_raw)
-    if _capture_payload is not None:
-        ms_total_capture = int((time.monotonic() - t_start) * 1000)
-        if _capture_payload:
-            try:
-                subprocess.Popen(
-                    [sys.executable, settings.content_capture_script,
-                     "--source", "voice", "--text", _capture_payload],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                log.info(
-                    "Capture command dispatched: %r -> %r (%dms)",
-                    text_raw, _capture_payload, ms_total_capture,
-                )
-                if _tray:
-                    _tray.notify("Content idea captured.")
-            except Exception as exc:
-                log.warning("Capture command subprocess failed: %s", exc)
-        else:
-            log.info("Capture command: empty payload, skipping.")
+    return None
+
+
+def _stage_capture_command(ctx: _DispatchContext) -> Optional[_Outcome]:
+    """Capture-command check: utterances starting with a capture trigger
+    phrase (e.g. "content idea ...") are routed to the external capture
+    script and suppressed from paste entirely."""
+    payload = _match_capture_command(ctx.text_raw)
+    if payload is None:
+        return None
+
+    ms_total_capture = int((time.monotonic() - ctx.t_start) * 1000)
+    if payload:
         try:
-            append(
-                mode_auto=mode_auto,
-                mode_forced=mode_forced,
-                language=language,
-                transcript_raw=text_raw,
-                transcript_clean=f"[capture:{_capture_payload}]",
-                app_process=process_name,
-                app_title=window_title,
-                ms_record=ms_record,
-                ms_transcribe=ms_transcribe,
-                ms_cleanup=0,
-                ms_total=ms_total_capture,
-                fallback=False,
+            subprocess.Popen(
+                [sys.executable, settings.content_capture_script,
+                 "--source", "voice", "--text", payload],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
-        except Exception as exc:
-            log.warning("History append failed: %s", exc)
-        if _tray:
-            _tray.set_idle()
-        if _overlay:
-            _overlay.set_state(_post_dispatch_state())
-        return
-
-    # Voice command short-circuit: whole-transcript exact match only.
-    # Commands are checked before snippets so reserved phrases always win.
-    _cmd_result = _match_voice_command(text_raw)
-    if _cmd_result is not None:
-        _cmd_action, _cmd_value = _cmd_result
-        ms_total_cmd = int((time.monotonic() - t_start) * 1000)
-        try:
-            append(
-                mode_auto=mode_auto,
-                mode_forced=mode_forced,
-                language=language,
-                transcript_raw=text_raw,
-                transcript_clean=f"[command:{_cmd_action}:{_cmd_value}]",
-                app_process=process_name,
-                app_title=window_title,
-                ms_record=ms_record,
-                ms_transcribe=ms_transcribe,
-                ms_cleanup=0,
-                ms_total=ms_total_cmd,
-                fallback=False,
+            log.info(
+                "Capture command dispatched: %r -> %r (%dms)",
+                ctx.text_raw, payload, ms_total_capture,
             )
+            if _tray:
+                _tray.notify("Content idea captured.")
         except Exception as exc:
-            log.warning("History append failed: %s", exc)
-        if _cmd_action == "text":
-            paste_text(_cmd_value)
-        elif _cmd_action == "key":
-            keyboard.send(_cmd_value)
-        log.info("Dispatched voice command [%s:%s] %dms total", _cmd_action, _cmd_value, ms_total_cmd)
-        if _tray:
-            _tray.set_idle()
-        if _overlay:
-            _overlay.set_state(_post_dispatch_state())
-        return
+            log.warning("Capture command subprocess failed: %s", exc)
+    else:
+        log.info("Capture command: empty payload, skipping.")
 
-    # Snippet shortcut: if the transcribed text (already with dictionary
-    # substitutions applied inside transcribe()) matches a snippet cue
-    # exactly, paste the expansion and skip LLM cleanup entirely.
-    snippet_expansion = expand_snippet(text_raw)
-    if snippet_expansion is not None:
-        ms_total_snippet = int((time.monotonic() - t_start) * 1000)
-        try:
-            append(
-                mode_auto=mode_auto,
-                mode_forced=mode_forced,
-                language=language,
-                transcript_raw=text_raw,
-                transcript_clean=snippet_expansion,
-                app_process=process_name,
-                app_title=window_title,
-                ms_record=ms_record,
-                ms_transcribe=ms_transcribe,
-                ms_cleanup=0,
-                ms_total=ms_total_snippet,
-                fallback=False,
-            )
-        except Exception as exc:
-            log.warning("History append failed: %s", exc)
-        paste_text(snippet_expansion)
-        log.info(
-            "Dispatched snippet expansion (skipped cleanup) %dms total",
-            ms_total_snippet,
-        )
-        if _tray:
-            _tray.set_idle()
-        if _overlay:
-            _overlay.set_state(_post_dispatch_state())
-        return
+    _append_history(
+        ctx,
+        transcript_clean=f"[capture:{payload}]",
+        ms_cleanup=0,
+        ms_total=ms_total_capture,
+        fallback=False,
+    )
+    return _Outcome(kind="capture_command")
 
-    # Inline formatting: split at "new paragraph" / "new line" / "next line"
-    # phrases found anywhere in the utterance, clean each segment separately,
-    # then rejoin with the recorded newline breaks.
-    inline_splits = _split_inline_formatting(text_raw)
+
+def _stage_voice_command(ctx: _DispatchContext) -> Optional[_Outcome]:
+    """Voice command short-circuit: whole-transcript exact match only.
+    Commands are checked before snippets so reserved phrases always win."""
+    cmd_result = _match_voice_command(ctx.text_raw)
+    if cmd_result is None:
+        return None
+
+    cmd_action, cmd_value = cmd_result
+    ms_total_cmd = int((time.monotonic() - ctx.t_start) * 1000)
+    _append_history(
+        ctx,
+        transcript_clean=f"[command:{cmd_action}:{cmd_value}]",
+        ms_cleanup=0,
+        ms_total=ms_total_cmd,
+        fallback=False,
+    )
+    if cmd_action == "text":
+        paste_text(cmd_value)
+    elif cmd_action == "key":
+        keyboard.send(cmd_value)
+    log.info("Dispatched voice command [%s:%s] %dms total", cmd_action, cmd_value, ms_total_cmd)
+    return _Outcome(kind="voice_command")
+
+
+def _stage_snippet(ctx: _DispatchContext) -> Optional[_Outcome]:
+    """Snippet shortcut: if the transcribed text (already with dictionary
+    substitutions applied inside transcribe()) matches a snippet cue exactly,
+    paste the expansion and skip LLM cleanup entirely."""
+    snippet_expansion = expand_snippet(ctx.text_raw)
+    if snippet_expansion is None:
+        return None
+
+    ms_total_snippet = int((time.monotonic() - ctx.t_start) * 1000)
+    _append_history(
+        ctx,
+        transcript_clean=snippet_expansion,
+        ms_cleanup=0,
+        ms_total=ms_total_snippet,
+        fallback=False,
+    )
+    paste_text(snippet_expansion)
+    log.info(
+        "Dispatched snippet expansion (skipped cleanup) %dms total",
+        ms_total_snippet,
+    )
+    return _Outcome(kind="snippet")
+
+
+def _stage_cleanup_and_paste(ctx: _DispatchContext) -> _Outcome:
+    """LLM cleanup + paste. Always terminal (the pipeline's default outcome).
+
+    Inline formatting splits at "new paragraph" / "new line" / "next line"
+    phrases found anywhere in the utterance, cleans each segment separately,
+    then rejoins with the recorded newline breaks. The RAW fallback badge is
+    surfaced when cleanup fell back to the unedited transcript."""
+    inline_splits = _split_inline_formatting(ctx.text_raw)
 
     if inline_splits is None:
         # Fast path: no inline formatting phrase present.  Single clean + paste,
         # exactly the original behaviour.
         text_clean, fallback = clean(
-            text_raw, effective_mode, _cfg.groq_api_key,
-            translate_to_english=translate_flag,
+            ctx.text_raw, ctx.effective_mode, _cfg.groq_api_key,
+            translate_to_english=ctx.translate_flag,
         )
-        if not translate_flag:
+        if not ctx.translate_flag:
             text_clean = apply_substitutions(text_clean)
         t_cleanup_end = time.monotonic()
-        ms_cleanup = int((t_cleanup_end - t_transcribe_end) * 1000)
-        ms_total = int((t_cleanup_end - t_start) * 1000)
-        try:
-            append(
-                mode_auto=mode_auto,
-                mode_forced=mode_forced,
-                language=language,
-                transcript_raw=text_raw,
-                transcript_clean=text_clean,
-                app_process=process_name,
-                app_title=window_title,
-                ms_record=ms_record,
-                ms_transcribe=ms_transcribe,
-                ms_cleanup=ms_cleanup,
-                ms_total=ms_total,
-                fallback=fallback,
-            )
-        except Exception as exc:
-            log.warning("History append failed: %s", exc)
+        ms_cleanup = int((t_cleanup_end - ctx.t_transcribe_end) * 1000)
+        ms_total = int((t_cleanup_end - ctx.t_start) * 1000)
+        _append_history(
+            ctx,
+            transcript_clean=text_clean,
+            ms_cleanup=ms_cleanup,
+            ms_total=ms_total,
+            fallback=fallback,
+        )
         _paste_with_breaks(text_clean)
     else:
         # Inline formatting path: clean each non-empty segment, join with \n.
@@ -805,14 +853,14 @@ def _dispatch(wav_path: Path) -> None:
             if not segment:
                 cleaned_parts.append(("", False))
                 continue
-            if effective_mode == "raw":
+            if ctx.effective_mode == "raw":
                 cleaned_parts.append((segment, False))
             else:
                 seg_clean, seg_fallback = clean(
-                    segment, effective_mode, _cfg.groq_api_key,
-                    translate_to_english=translate_flag,
+                    segment, ctx.effective_mode, _cfg.groq_api_key,
+                    translate_to_english=ctx.translate_flag,
                 )
-                if not translate_flag:
+                if not ctx.translate_flag:
                     seg_clean = apply_substitutions(seg_clean)
                 cleaned_parts.append((seg_clean, seg_fallback))
                 if seg_fallback:
@@ -827,42 +875,80 @@ def _dispatch(wav_path: Path) -> None:
         text_clean = "".join(assembled_parts)
 
         t_cleanup_end = time.monotonic()
-        ms_cleanup = int((t_cleanup_end - t_transcribe_end) * 1000)
-        ms_total = int((t_cleanup_end - t_start) * 1000)
-        try:
-            append(
-                mode_auto=mode_auto,
-                mode_forced=mode_forced,
-                language=language,
-                transcript_raw=text_raw,
-                transcript_clean=text_clean,
-                app_process=process_name,
-                app_title=window_title,
-                ms_record=ms_record,
-                ms_transcribe=ms_transcribe,
-                ms_cleanup=ms_cleanup,
-                ms_total=ms_total,
-                fallback=any_fallback,
-            )
-        except Exception as exc:
-            log.warning("History append failed: %s", exc)
+        ms_cleanup = int((t_cleanup_end - ctx.t_transcribe_end) * 1000)
+        ms_total = int((t_cleanup_end - ctx.t_start) * 1000)
+        _append_history(
+            ctx,
+            transcript_clean=text_clean,
+            ms_cleanup=ms_cleanup,
+            ms_total=ms_total,
+            fallback=any_fallback,
+        )
         _paste_with_breaks(text_clean)
         fallback = any_fallback
 
     log.info(
         "Dispatched [%s] lang=%s %dms total%s",
-        effective_mode,
-        language,
+        ctx.effective_mode,
+        ctx.language,
         ms_total,
         " (fallback)" if fallback else "",
     )
+    return _Outcome(kind="cleaned_paste", fallback_badge=fallback)
+
+
+def _finalise(outcome: _Outcome) -> None:
+    """Single shared exit path for every terminal outcome.
+
+    Resets the tray to idle and the overlay back to its post-dispatch state
+    exactly once, in one place, so the reset can never drift between branches.
+    The RAW badge is set from the outcome: the cleanup branch passes the real
+    fallback flag, every short-circuit branch passes False. See the LATENT BUG
+    note below."""
     if _tray:
         _tray.set_idle()
+        if outcome.tray_notify:
+            _tray.notify(outcome.tray_notify)
     if _overlay:
-        # Surface the RAW badge when cleanup fell back to the unedited
-        # transcript, so the user can see the paste is raw Whisper output.
-        _overlay.set_fallback(fallback)
+        # LATENT BUG FIX (flagged to the orchestrator): the pre-refactor code
+        # only ever called set_fallback() on the cleanup branch, so a stale
+        # RAW badge from a fallback paste survived across a following snippet,
+        # voice command, capture command, empty burst or transcription error.
+        # overlay.set_fallback's own docstring promises the badge clears "on
+        # the next successful dispatch". Routing the badge through the single
+        # finalise, with every short-circuit outcome carrying fallback_badge
+        # False, honours that contract. The cleanup branch is unchanged.
+        _overlay.set_fallback(outcome.fallback_badge)
         _overlay.set_state(_post_dispatch_state())
+
+
+def _dispatch(wav_path: Path) -> None:
+    """Public dispatch entry point (signature and threading unchanged).
+
+    Called from the hotkey thread (hold-to-talk release) and, one burst at a
+    time, from the session worker thread. Runs the pipeline stages in order;
+    the first stage to return an _Outcome wins and the rest are skipped. The
+    cleanup stage always returns an outcome, so _finalise runs exactly once."""
+    ctx = _DispatchContext(wav_path=wav_path, t_start=time.monotonic())
+
+    if _tray:
+        _tray.set_processing()
+    if _overlay:
+        _overlay.set_state("processing")
+
+    _resolve_context(ctx)
+
+    outcome = _stage_transcribe(ctx)
+    if outcome is None:
+        outcome = _stage_capture_command(ctx)
+    if outcome is None:
+        outcome = _stage_voice_command(ctx)
+    if outcome is None:
+        outcome = _stage_snippet(ctx)
+    if outcome is None:
+        outcome = _stage_cleanup_and_paste(ctx)
+
+    _finalise(outcome)
 
 
 # ---------------------------------------------------------------------------
