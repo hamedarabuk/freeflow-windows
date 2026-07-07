@@ -193,6 +193,16 @@ _DEFAULT_CONTENT_CAPTURE_SCRIPT: str = (
     r"D:\01 Projects\Persian CLAW\scripts\content_capture.py"
 )
 
+# Edit commands: utterances that START WITH one of these phrases trigger
+# natural-language editing of the current text selection (e.g. "edit this:
+# make it more formal"). Same trigger-phrase + payload-strip convention as
+# capture commands.
+_DEFAULT_EDIT_COMMANDS: list[str] = [
+    "edit this",
+    "rewrite this",
+    "edit selection",
+]
+
 # Inline formatting commands: recognised anywhere in an utterance (case-insensitive,
 # word-boundary match).  Each entry maps one or more spoken phrases to a number of
 # newlines that should be inserted at that position.
@@ -304,6 +314,13 @@ class DictationSettings:
 
     # Absolute path to the content-capture script called by capture commands.
     content_capture_script: str = _DEFAULT_CONTENT_CAPTURE_SCRIPT
+
+    # Edit commands: list of trigger phrases (normalised, case-insensitive)
+    # whose utterances trigger natural-language editing of the current text
+    # selection via cleanup.edit_text.
+    edit_commands: tuple = field(
+        default_factory=lambda: tuple(_DEFAULT_EDIT_COMMANDS)
+    )
 
     # brand_voice mode: brand identity injected into prompts/brand_voice.txt.
     # brand_name replaces {{brand_name}} in the prompt template.
@@ -464,6 +481,11 @@ def _load_settings() -> DictationSettings:
 
     if "content_capture_script" in raw:
         kwargs["content_capture_script"] = str(raw["content_capture_script"])
+
+    if "edit_commands" in raw:
+        cmds = raw["edit_commands"]
+        if isinstance(cmds, list):
+            kwargs["edit_commands"] = tuple(str(c) for c in cmds)
 
     if "quality_guard_level" in raw:
         kwargs["quality_guard_level"] = str(raw["quality_guard_level"])

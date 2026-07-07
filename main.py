@@ -24,11 +24,13 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import keyboard
+import pyperclip
 
 # ---------------------------------------------------------------------------
 # Optional pynput backend
@@ -50,7 +52,7 @@ migrate_legacy_user_data()
 
 from backup import backup_if_changed
 from config import load_config
-from cleanup import clean
+from cleanup import clean, edit_text
 from dictionary import apply_substitutions
 from history import append, last_ten, log_dir
 from paste import paste_text
@@ -116,6 +118,21 @@ _current_audio_level: float = 0.0
 # Single-writer / single-reader per dispatch, no lock needed.
 _last_paste_len: int = 0
 _last_paste_ts: float = 0.0
+
+# Rolling latency window: ms_total of the last 20 completed cleaned_paste
+# dispatches. Single-writer (dispatch thread) / single-reader (overlay poll),
+# no lock needed, same convention as _current_audio_level above.
+_recent_latency_ms: "deque[int]" = deque(maxlen=20)
+
+
+def get_recent_latency_ms() -> Optional[tuple[int, int]]:
+    """Return (last, avg) ms_total over the rolling window of recent
+    cleaned_paste dispatches, or None when the window is empty."""
+    if not _recent_latency_ms:
+        return None
+    last = _recent_latency_ms[-1]
+    avg = int(sum(_recent_latency_ms) / len(_recent_latency_ms))
+    return last, avg
 
 
 def _on_audio_level(rms: float) -> None:
@@ -522,6 +539,68 @@ def _match_capture_command(text: str):
     return None
 
 
+# Guard against pasting an enormous selection into the LLM (cost + latency).
+_EDIT_SELECTION_MAX_CHARS = 8000
+
+
+def _match_edit_command(text: str):
+    """Return the instruction string if text starts with an edit-command
+    trigger phrase (e.g. "edit this: make it more formal"), else None.
+
+    Same trigger-phrase-plus-payload-strip convention as
+    _match_capture_command: the trigger phrase (and any immediately following
+    colon, comma or whitespace) is stripped to yield the instruction. Returns
+    an empty string when the utterance was only the trigger phrase.
+    """
+    normalised = _normalise_cmd(text)
+    for phrase in settings.edit_commands:
+        trigger = _normalise_cmd(str(phrase))
+        if not trigger:
+            continue
+        if normalised == trigger:
+            return ""
+        if normalised.startswith(trigger):
+            rest = normalised[len(trigger):]
+            rest = rest.lstrip(" :,")
+            return rest
+    return None
+
+
+def _capture_selection() -> tuple[Optional[str], str]:
+    """Capture the current text selection via a clipboard round-trip.
+
+    Saves the existing clipboard, clears it, sends Ctrl+C, then reads the
+    clipboard back after a brief wait (retrying once for slower apps: 0.15s,
+    then a further 0.15s if still empty). Always returns the saved clipboard
+    alongside the result so the caller can restore it on any outcome that
+    does not go on to paste.
+
+    Returns (selection, old_clipboard). selection is None if nothing was
+    selected after the retry.
+    """
+    try:
+        old_clipboard = pyperclip.paste()
+    except Exception:
+        old_clipboard = ""
+    try:
+        pyperclip.copy("")
+    except Exception:
+        pass
+    keyboard.send("ctrl+c")
+    time.sleep(0.15)
+    try:
+        selection = pyperclip.paste()
+    except Exception:
+        selection = ""
+    if not selection:
+        time.sleep(0.15)
+        try:
+            selection = pyperclip.paste()
+        except Exception:
+            selection = ""
+    return (selection or None), old_clipboard
+
+
 def _build_inline_pattern():
     """Return a compiled regex that matches any inline formatting phrase.
 
@@ -683,6 +762,17 @@ class _Outcome:
     fallback_badge: bool = False
 
 
+def _log_latency(ctx: _DispatchContext, ms_cleanup: int, ms_total: int) -> None:
+    """Emit the structured latency line for a completed paste outcome
+    (cleaned_paste, snippet, voice command). ms_cleanup is 0 where the
+    cleanup stage did not run. Uses the timings already tracked on *ctx*;
+    no new timers on the hot path."""
+    log.info(
+        "latency ms_total=%d ms_transcribe=%d ms_cleanup=%d mode=%s",
+        ms_total, ctx.ms_transcribe, ms_cleanup, ctx.effective_mode,
+    )
+
+
 def _append_history(
     ctx: _DispatchContext,
     *,
@@ -809,6 +899,74 @@ def _stage_capture_command(ctx: _DispatchContext) -> Optional[_Outcome]:
     return _Outcome(kind="capture_command")
 
 
+def _stage_edit_command(ctx: _DispatchContext) -> Optional[_Outcome]:
+    """Edit-command check: utterances starting with an edit trigger phrase
+    (e.g. "edit this: make it more formal") capture the current text
+    selection, rewrite it via cleanup.edit_text, and paste the result over
+    the selection. Every branch is terminal once the trigger phrase matches.
+    """
+    instruction = _match_edit_command(ctx.text_raw)
+    if instruction is None:
+        return None
+
+    global _last_paste_len, _last_paste_ts
+    kind = "edit_command"
+    tray_notify: Optional[str] = None
+    fallback = False
+
+    if not instruction:
+        log.info("Edit command: empty instruction, skipping.")
+        kind = "edit_command_empty"
+    else:
+        selection, old_clipboard = _capture_selection()
+        if selection is None:
+            try:
+                pyperclip.copy(old_clipboard)
+            except Exception:
+                pass
+            log.info("Edit command: no text selected.")
+            kind, tray_notify = "edit_command_no_selection", "No text selected"
+        elif len(selection) > _EDIT_SELECTION_MAX_CHARS:
+            try:
+                pyperclip.copy(old_clipboard)
+            except Exception:
+                pass
+            log.info("Edit command: selection too large (%d chars).", len(selection))
+            kind, tray_notify = "edit_command_too_large", "Selection too large"
+        else:
+            edited = edit_text(selection, instruction, _cfg.groq_api_key)
+            if edited is None:
+                try:
+                    pyperclip.copy(old_clipboard)
+                except Exception:
+                    pass
+                log.warning("Edit command: edit_text failed for instruction %r", instruction)
+                kind, tray_notify, fallback = "edit_command_failed", "Edit failed", True
+            else:
+                paste_text(edited)
+                _last_paste_len = len(edited)
+                _last_paste_ts = time.monotonic()
+                # paste_text leaves the pasted text on the clipboard (the
+                # convention every other paste path in this module follows);
+                # the original clipboard is restored above only on the
+                # non-paste outcomes.
+
+    ms_total = int((time.monotonic() - ctx.t_start) * 1000)
+    _append_history(
+        ctx,
+        transcript_clean=f"[edit:{instruction}]",
+        ms_cleanup=0,
+        ms_total=ms_total,
+        fallback=fallback,
+    )
+    if tray_notify and _tray:
+        _tray.notify(tray_notify)
+    if kind == "edit_command":
+        log.info("Dispatched edit command [%s] %dms total", instruction, ms_total)
+        _log_latency(ctx, 0, ms_total)
+    return _Outcome(kind=kind)
+
+
 def _stage_voice_command(ctx: _DispatchContext) -> Optional[_Outcome]:
     """Voice command short-circuit: whole-transcript exact match only.
     Commands are checked before snippets so reserved phrases always win."""
@@ -835,6 +993,7 @@ def _stage_voice_command(ctx: _DispatchContext) -> Optional[_Outcome]:
     elif cmd_action == "undo_paste":
         _undo_last_paste()
     log.info("Dispatched voice command [%s:%s] %dms total", cmd_action, cmd_value, ms_total_cmd)
+    _log_latency(ctx, 0, ms_total_cmd)
     return _Outcome(kind="voice_command")
 
 
@@ -862,6 +1021,7 @@ def _stage_snippet(ctx: _DispatchContext) -> Optional[_Outcome]:
         "Dispatched snippet expansion (skipped cleanup) %dms total",
         ms_total_snippet,
     )
+    _log_latency(ctx, 0, ms_total_snippet)
     return _Outcome(kind="snippet")
 
 
@@ -943,6 +1103,8 @@ def _stage_cleanup_and_paste(ctx: _DispatchContext) -> _Outcome:
         ms_total,
         " (fallback)" if fallback else "",
     )
+    _log_latency(ctx, ms_cleanup, ms_total)
+    _recent_latency_ms.append(ms_total)
     return _Outcome(kind="cleaned_paste", fallback_badge=fallback)
 
 
@@ -1003,6 +1165,8 @@ def _dispatch(wav_path: Path) -> None:
     outcome = _stage_transcribe(ctx)
     if outcome is None:
         outcome = _stage_capture_command(ctx)
+    if outcome is None:
+        outcome = _stage_edit_command(ctx)
     if outcome is None:
         outcome = _stage_voice_command(ctx)
     if outcome is None:
@@ -1270,6 +1434,7 @@ def main() -> None:
         get_session_active=lambda: _session_active,
         get_dictation_language=lambda: settings.dictation_language,
         on_cycle_language=_cycle_dictation_language,
+        get_last_latency=lambda: (get_recent_latency_ms() or (None, None))[0],
     )
 
     if settings.input_backend == "pynput":

@@ -74,6 +74,10 @@ _H = 132       # includes the 14px grip bar at the top
 # elapsed-time suffix, so the extra digits don't reflow the row (and the
 # lang pill next to it) on every tick. Reverts to auto-width (0) otherwise.
 _PROCESSING_LABEL_WIDTH = 150
+
+# How long the post-dispatch latency suffix (e.g. "Idle 1.8s") stays on the
+# state label after returning to rest, before reverting to the plain label.
+_LATENCY_SUFFIX_S = 3.0
 _GRIP_H = 14
 _MARGIN_RIGHT  = 24
 _MARGIN_BOTTOM = 48
@@ -156,6 +160,7 @@ class Overlay:
         get_session_active: Optional[Callable[[], bool]] = None,
         get_dictation_language: Optional[Callable[[], str]] = None,
         on_cycle_language: Optional[Callable[[], None]] = None,
+        get_last_latency: Optional[Callable[[], Optional[int]]] = None,
     ) -> None:
         self._on_pause_toggle = on_pause_toggle
         self._on_force_mode = on_force_mode
@@ -173,9 +178,13 @@ class Overlay:
         # (not the detected language above). Clicking cycles en -> fa -> auto.
         self._get_dictation_language = get_dictation_language or (lambda: "en")
         self._on_cycle_language = on_cycle_language
+        # Last dispatch's ms_total, for the brief post-dispatch latency
+        # suffix on the resting state label.
+        self._get_last_latency = get_last_latency or (lambda: None)
 
         self._state = "idle"
         self._processing_started: Optional[float] = None
+        self._latency_shown_at: Optional[float] = None
         self._paused = False
         self._last_fallback = False  # True when the last dispatch used the raw transcript
         self._menu_top: Optional[ctk.CTkToplevel] = None
@@ -209,6 +218,10 @@ class Overlay:
         return self._root
 
     def set_state(self, state: str) -> None:
+        # Leaving processing: stamp the moment so the resting state label
+        # can show a brief latency suffix (see _refresh).
+        if self._state == "processing" and state != "processing":
+            self._latency_shown_at = time.monotonic()
         self._state = state
         # Recorded synchronously (not deferred to the Tk thread) so the
         # elapsed clock starts the instant "processing" begins, whichever
@@ -476,8 +489,23 @@ class Overlay:
                     self._label_state.configure(width=_PROCESSING_LABEL_WIDTH, anchor="w")
                 else:
                     self._label_state.configure(width=0)
+            elif (
+                self._latency_shown_at is not None
+                and time.monotonic() - self._latency_shown_at < _LATENCY_SUFFIX_S
+            ):
+                # Brief post-dispatch latency suffix on the resting state
+                # label, same pattern as the processing elapsed-time suffix
+                # above: reverts on a later _refresh tick once the window
+                # passes, no dedicated timer.
+                last_ms = self._get_last_latency()
+                if last_ms is not None:
+                    label_text = f"{label_text} {last_ms / 1000:.1f}s"
+                    self._label_state.configure(width=_PROCESSING_LABEL_WIDTH, anchor="w")
+                else:
+                    self._label_state.configure(width=0)
             else:
                 self._label_state.configure(width=0)
+                self._latency_shown_at = None
             self._label_state.configure(text=label_text)
 
         # Show equaliser whilst recording, otherwise show the state label.
