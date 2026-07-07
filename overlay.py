@@ -23,6 +23,8 @@ from typing import Callable, Deque, Optional
 
 import customtkinter as ctk
 
+from paths import logs_dir
+
 ctk.set_appearance_mode("dark")
 
 MODES = ["polished", "brand_voice", "prompt", "note", "raw"]
@@ -146,6 +148,8 @@ class Overlay:
         on_hide_gadget: Optional[Callable[[], None]] = None,
         on_session_toggle: Optional[Callable[[], None]] = None,
         get_session_active: Optional[Callable[[], bool]] = None,
+        get_dictation_language: Optional[Callable[[], str]] = None,
+        on_cycle_language: Optional[Callable[[], None]] = None,
     ) -> None:
         self._on_pause_toggle = on_pause_toggle
         self._on_force_mode = on_force_mode
@@ -159,6 +163,10 @@ class Overlay:
         self._get_forced = get_forced
         self._get_detected_language = get_detected_language
         self._get_audio_level = get_audio_level
+        # Language pill: shows and controls settings.dictation_language
+        # (not the detected language above). Clicking cycles en -> fa -> auto.
+        self._get_dictation_language = get_dictation_language or (lambda: "en")
+        self._on_cycle_language = on_cycle_language
 
         self._state = "idle"
         self._paused = False
@@ -332,8 +340,11 @@ class Overlay:
             corner_radius=6,
             width=28, height=16,
         )  # packed/forgotten by _refresh
-        # Tooltip: hovering the language pill shows what it means.
-        self._lang_pill._canvas.configure(cursor="question_arrow")
+        # Clickable: shows the dictation-language lock (en/fa/auto) and
+        # cycles it on click via self._on_cycle_language.
+        self._lang_pill._canvas.configure(cursor="hand2")
+        self._lang_pill.bind("<Button-1>", self._on_lang_pill_clicked)
+        self._lang_pill._canvas.bind("<Button-1>", self._on_lang_pill_clicked)
 
         # --- Middle row: mode pill button ---
         # Compact: the mode menu is configuration the user reads occasionally,
@@ -471,15 +482,20 @@ class Overlay:
                 auto = self._get_auto_mode()
                 self._mode_button.configure(text=f"AUTO · {_format_mode_label(auto)}  ▾")
 
-        # Language pill
-        lang = self._get_detected_language()
-        if lang:
-            self._lang_pill.configure(text=lang.upper())
-            if not self._lang_pill.winfo_ismapped():
-                self._lang_pill.pack(side="right", pady=(2, 0))
+        # Language pill: shows the dictation-language LOCK, not the detected
+        # language. Always visible (it is a control, not transient
+        # detection). "auto" shows the detected language alongside the lock
+        # when one is available, e.g. "AUTO:EN".
+        lock = self._get_dictation_language()
+        lock_upper = (lock or "auto").upper()
+        if lock_upper == "AUTO":
+            detected = self._get_detected_language()
+            pill_text = f"AUTO:{detected.upper()}" if detected else "AUTO"
         else:
-            if self._lang_pill.winfo_ismapped():
-                self._lang_pill.pack_forget()
+            pill_text = lock_upper
+        self._lang_pill.configure(text=pill_text)
+        if not self._lang_pill.winfo_ismapped():
+            self._lang_pill.pack(side="right", pady=(2, 0))
 
         # Translate badge
         if self._get_translate():
@@ -692,6 +708,16 @@ class Overlay:
             self._root.after(50, self._refresh)
 
     # ------------------------------------------------------------------
+    # Language pill click: cycle the dictation-language lock (en/fa/auto).
+    # ------------------------------------------------------------------
+
+    def _on_lang_pill_clicked(self, event=None) -> None:
+        if self._on_cycle_language is None:
+            return
+        self._on_cycle_language()
+        self._refresh()
+
+    # ------------------------------------------------------------------
     # Drag
     # ------------------------------------------------------------------
 
@@ -715,12 +741,11 @@ class Overlay:
 
     # File-based drag diagnostics. Pythonw has no stderr so we log to disk.
     # Reset every press; truncated to keep things readable.
-    _DRAG_LOG = Path(__file__).resolve().parent / "logs" / "drag-debug.log"
 
     def _drag_log(self, line: str) -> None:
         try:
-            self._DRAG_LOG.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._DRAG_LOG, "a", encoding="utf-8") as f:
+            drag_log_path = logs_dir() / "drag-debug.log"
+            with open(drag_log_path, "a", encoding="utf-8") as f:
                 from datetime import datetime
                 f.write(f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]}  {line}\n")
         except Exception:

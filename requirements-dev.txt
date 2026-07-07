@@ -3,3 +3,6 @@
 
 # Eval harness (tests/eval/run_eval.py): WER and CER metrics.
 jiwer>=3.0.0
+
+# Regression test suite (tests/).
+pytest>=7.0.0

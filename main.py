@@ -56,7 +56,7 @@ from paste import paste_text
 from recorder import Recorder
 from router import pick_mode, _get_foreground_info
 from snippets import expand_snippet
-from settings import settings
+from settings import settings, set_dictation_language
 from transcribe import transcribe
 from tray import TrayIcon
 from overlay import Overlay, load_state as _load_overlay_state
@@ -65,10 +65,33 @@ from overlay import Overlay, load_state as _load_overlay_state
 # the toggle handler so a missing webrtcvad install doesn't block startup
 # of the regular hold-to-talk path.
 
+_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    format=_LOG_FORMAT,
 )
+
+# File logging: pythonw and the frozen (PyInstaller) build have no console,
+# so without a file handler the installed app logs nothing at all. Rotating
+# handler in %APPDATA%\FreeFlow\logs; failure to attach must never block
+# startup (for example a locked file from a second instance).
+try:
+    from logging.handlers import RotatingFileHandler
+
+    from paths import logs_dir as _logs_dir
+
+    _file_handler = RotatingFileHandler(
+        _logs_dir() / "app.log",
+        maxBytes=1_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    _file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    logging.getLogger().addHandler(_file_handler)
+except Exception:
+    pass
+
 log = logging.getLogger("dictation.main")
 
 _tray: Optional[TrayIcon] = None
@@ -172,6 +195,33 @@ def _on_set_translate(on: bool) -> None:
     if _overlay:
         _overlay.set_translate(on)
     log.info("Translate-to-English: %s", on)
+
+
+# Dictation-language lock cycle order: en -> fa -> auto -> en.
+_DICTATION_LANGUAGE_ORDER = ("en", "fa", "auto")
+
+
+def _set_dictation_language(lang: str) -> None:
+    """Set the dictation-language lock to an explicit value.
+
+    Shared helper used by both the overlay's language-pill click-cycle and
+    the tray's Language submenu radio items, so the two controls never
+    drift out of sync.
+    """
+    set_dictation_language(lang)
+    if _tray:
+        _tray.refresh_language()
+        _tray.notify(f"Dictation language: {lang.upper()}")
+
+
+def _cycle_dictation_language() -> None:
+    """Cycle the dictation-language lock: en -> fa -> auto -> en."""
+    try:
+        idx = _DICTATION_LANGUAGE_ORDER.index(settings.dictation_language)
+    except ValueError:
+        idx = -1
+    next_lang = _DICTATION_LANGUAGE_ORDER[(idx + 1) % len(_DICTATION_LANGUAGE_ORDER)]
+    _set_dictation_language(next_lang)
 
 
 def _on_show_last() -> None:
@@ -296,18 +346,26 @@ def _on_session_burst(wav_path: Path) -> None:
 
 def _session_worker_loop() -> None:
     """Drain the session dispatch queue strictly in order. Sentinel value
-    None tells the worker to exit."""
+    None tells the worker to exit.
+
+    The whole iteration body is guarded so no unexpected exception can kill
+    the thread silently: a dead worker used to stall session mode with no
+    visible symptom (bursts queued, nothing pasted)."""
     while not _session_worker_stop.is_set():
         try:
-            wav_path = _session_dispatch_queue.get(timeout=0.5)
-        except queue.Empty:
-            continue
-        if wav_path is None:
-            return
-        try:
-            _dispatch(wav_path)
+            try:
+                wav_path = _session_dispatch_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if wav_path is None:
+                return
+            try:
+                _dispatch(wav_path)
+            except Exception as exc:
+                log.exception("Session burst dispatch failed: %s", exc)
         except Exception as exc:
-            log.exception("Session burst dispatch failed: %s", exc)
+            log.exception("Session worker iteration failed: %s", exc)
+            time.sleep(0.5)
 
 
 def _start_session_worker() -> None:
@@ -330,6 +388,35 @@ def _start_session_worker() -> None:
 def _stop_session_worker() -> None:
     _session_worker_stop.set()
     _session_dispatch_queue.put(None)
+
+
+def _session_watchdog_loop() -> None:
+    """Liveness watchdog for the session worker thread.
+
+    Every 30 seconds: if session mode is active but the worker thread has
+    died, start a replacement so queued bursts resume instead of stalling
+    silently. Runs as a daemon thread for the lifetime of the app."""
+    while True:
+        time.sleep(30)
+        try:
+            with _session_lock:
+                if not _session_active:
+                    continue
+                if _session_worker is None or not _session_worker.is_alive():
+                    log.warning(
+                        "Session worker thread dead while session active; restarting."
+                    )
+                    _start_session_worker()
+        except Exception as exc:
+            log.exception("Session watchdog iteration failed: %s", exc)
+
+
+def _start_session_watchdog() -> None:
+    threading.Thread(
+        target=_session_watchdog_loop,
+        daemon=True,
+        name="dictation-session-watchdog",
+    ).start()
 
 
 def _on_session_toggle() -> None:
@@ -995,6 +1082,8 @@ def main() -> None:
 
     _restore_persisted_state()
 
+    _start_session_watchdog()
+
     try:
         from welcome import show_welcome_once
         show_welcome_once()
@@ -1012,6 +1101,8 @@ def main() -> None:
         on_edit_dictionary=_on_edit_dictionary,
         on_edit_snippets=_on_edit_snippets,
         on_about=_on_about,
+        on_set_language=_set_dictation_language,
+        get_dictation_language=lambda: settings.dictation_language,
     )
     _tray.start()
 
@@ -1028,6 +1119,8 @@ def main() -> None:
         on_hide_gadget=_on_hide_gadget,
         on_session_toggle=_on_session_toggle,
         get_session_active=lambda: _session_active,
+        get_dictation_language=lambda: settings.dictation_language,
+        on_cycle_language=_cycle_dictation_language,
     )
 
     if settings.input_backend == "pynput":

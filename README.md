@@ -103,6 +103,7 @@ Three additional settings in `settings.json` are worth knowing:
 
 | Key | Default | What it does |
 |---|---|---|
+| `dictation_language` | `"en"` | Forced ISO code sent to Whisper. `"en"` locks English so accented speech is never hallucinated into another script. Set to `"auto"` to detect per utterance, or `"fa"` to force Persian. |
 | `quality_guard_level` | `"fast"` | `"fast"` uses word-count and edit-distance checks only. `"full"` adds cosine similarity (requires `sentence-transformers` from `requirements-optional.txt`). |
 | `brand_name` | `"the user's brand"` | Your brand name, injected into the `brand_voice` mode prompt. Set this to your actual brand name (e.g. `"Silux London"`). |
 | `input_backend` | `"keyboard"` | `"keyboard"` (default) requires admin rights. `"pynput"` is an experimental no-admin alternative; install `pynput` from `requirements-optional.txt` first. |

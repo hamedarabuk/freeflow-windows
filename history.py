@@ -10,14 +10,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-LOG_DIR = PROJECT_ROOT / "logs"
+from paths import logs_dir
 
 
 def _today_log_path() -> Path:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
     date_str = datetime.now().strftime("%Y-%m-%d")
-    return LOG_DIR / f"{date_str}.jsonl"
+    return logs_dir() / f"{date_str}.jsonl"
 
 
 def append(
@@ -72,4 +70,4 @@ def last_ten() -> list[dict]:
 
 
 def log_dir() -> Path:
-    return LOG_DIR
+    return logs_dir()

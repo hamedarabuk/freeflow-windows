@@ -43,6 +43,23 @@ def user_file(name: str) -> Path:
     return user_data_dir() / name
 
 
+def logs_dir() -> Path:
+    """Stable per-user logs directory: %APPDATA%\\FreeFlow\\logs (created if missing).
+
+    Mirrors user_data_dir(): the frozen build's install folder can be wiped on
+    every reinstall/update and is not a reliable place to write logs, so every
+    log writer (dictation history, quality-guard records, drag diagnostics,
+    the general application log) must live under this stable per-user
+    location instead. Works identically from source and frozen runs.
+    """
+    path = user_data_dir() / "logs"
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        log.warning("Failed to create logs directory %s", path)
+    return path
+
+
 def resource_dir() -> Path:
     """Directory of bundled READ-ONLY resources (frozen or source-run)."""
     if getattr(sys, "frozen", False):

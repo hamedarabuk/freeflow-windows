@@ -10,8 +10,14 @@ Guard stack (in order):
      settings.quality_guard_level == 'full'.
 
 Translate mode: edit-ratio and word-ratio guards are meaningless across
-scripts (Persian -> English). When translate=True, fast guards are skipped
-and only the semantic guard is applied (with a lower threshold of 0.82).
+scripts (Persian -> English), so the ordinary fast guards are skipped.
+Translate mode is never an unconditional accept, though: a lightweight
+always-on gate runs at every guard level regardless of 'fast'/'full':
+a generous character-length-ratio sanity bound, a meta-text/instruction-echo
+pattern match (settings.translate_meta_patterns), and, opportunistically,
+the semantic-similarity check if the model is already loaded. The full
+semantic guard (settings.quality_guard_level == 'full') still runs as
+before with the lower cross-script threshold of 0.82.
 
 Loop logic:
   - check() returns a GuardResult.
@@ -34,8 +40,10 @@ import threading
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
+
+from paths import logs_dir
+from settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +55,13 @@ _WORD_RATIO_HI   = 1.25
 _EDIT_RATIO_MAX  = 0.20
 _SEM_THRESHOLD   = 0.90   # same-language
 _SEM_TRANSLATE   = 0.82   # cross-script translation
+
+# Translate-mode length-ratio sanity bound (character length, cleaned/raw).
+# Deliberately generous: translation legitimately shrinks or expands text
+# (Persian script vs English, added grammar words). Only extremes are
+# rejected: near-empty output for substantial input, or wildly bloated output.
+_TRANSLATE_LEN_RATIO_LO = 0.15
+_TRANSLATE_LEN_RATIO_HI = 4.0
 
 # ---------------------------------------------------------------------------
 # Optional: sentence-transformers semantic guard
@@ -116,6 +131,26 @@ def _word_ratio(raw: str, cleaned: str) -> float:
     return c / r
 
 
+def _length_ratio(raw: str, cleaned: str) -> float:
+    """Character-length ratio (cleaned/raw). Used in translate mode, where
+    edit-distance and word-count ratios are meaningless across scripts."""
+    r = len(raw)
+    if r == 0:
+        return 1.0
+    return len(cleaned) / r
+
+
+def _matches_meta_text(cleaned: str, patterns) -> str:
+    """Return the first pattern found (case-insensitive substring) in
+    *cleaned*, or an empty string if none match."""
+    lower = cleaned.lower()
+    for pattern in patterns:
+        p = str(pattern).strip().lower()
+        if p and p in lower:
+            return str(pattern)
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Result dataclass
 # ---------------------------------------------------------------------------
@@ -176,6 +211,54 @@ def check(
                 failed_guard="edit_ratio",
                 confidence=confidence,
             )
+    else:
+        # Translate mode: word-count/edit-distance guards above are
+        # meaningless across scripts, but translate mode must never be an
+        # unconditional accept. Always-on checks run at EVERY guard level,
+        # not just 'full'. word_ratio and edit_ratio_val are still populated
+        # here (edit_ratio_val holds the character-length ratio, not edit
+        # distance) so downstream logs never show null ratios for translate
+        # records.
+        word_ratio = _word_ratio(raw, cleaned)
+        edit_r = _length_ratio(raw, cleaned)
+
+        if not (_TRANSLATE_LEN_RATIO_LO <= edit_r <= _TRANSLATE_LEN_RATIO_HI):
+            return GuardResult(
+                accepted=False,
+                reask=not is_retry,
+                word_ratio=word_ratio,
+                edit_ratio_val=edit_r,
+                failed_guard="translate_length_ratio",
+                confidence=confidence,
+            )
+
+        meta_match = _matches_meta_text(cleaned, settings.translate_meta_patterns)
+        if meta_match:
+            return GuardResult(
+                accepted=False,
+                reask=not is_retry,
+                word_ratio=word_ratio,
+                edit_ratio_val=edit_r,
+                failed_guard="translate_meta_text",
+                confidence=confidence,
+            )
+
+        # Opportunistic semantic check: only if the model is ALREADY loaded
+        # (never force a fresh load just because translate mode is active,
+        # to keep 'fast' level cheap). guard_level == 'full' is handled by
+        # the block below, so skip here to avoid a duplicate embedding call.
+        if guard_level != "full" and _sem_model is not None:
+            sem = _semantic_sim(raw, cleaned)
+            if sem is not None and sem < _SEM_TRANSLATE:
+                return GuardResult(
+                    accepted=False,
+                    reask=not is_retry,
+                    word_ratio=word_ratio,
+                    edit_ratio_val=edit_r,
+                    sem_sim=sem,
+                    failed_guard="semantic_sim",
+                    confidence=confidence,
+                )
 
     # Semantic guard (optional, full level only)
     if guard_level == "full":
@@ -205,8 +288,6 @@ def check(
 # ---------------------------------------------------------------------------
 # Async judge log (fire-and-forget)
 # ---------------------------------------------------------------------------
-
-_LOGS_DIR = Path(__file__).resolve().parent / "logs"
 
 def log_async(
     *,
@@ -310,9 +391,8 @@ def _judge_and_write(
     }
 
     try:
-        _LOGS_DIR.mkdir(exist_ok=True)
         date_str = datetime.now().strftime("%Y-%m-%d")
-        log_path = _LOGS_DIR / f"quality-{date_str}.jsonl"
+        log_path = logs_dir() / f"quality-{date_str}.jsonl"
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception as exc:

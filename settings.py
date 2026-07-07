@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -125,6 +126,18 @@ _DEFAULT_INLINE_FORMATTING: list[dict] = [
     {"phrases": ["new line", "next line"], "newlines": 1},
 ]
 
+# Translate mode meta-text/instruction-echo detector (quality_guard.py).
+# A translation that contains one of these phrases is almost certainly the
+# model narrating its own reasoning instead of translating, and is rejected
+# regardless of guard_level. Case-insensitive substring match. Extend via
+# settings.json without touching source code.
+_DEFAULT_TRANSLATE_META_PATTERNS: list[str] = [
+    "i should say in english",
+    "as an ai",
+    "here is the translation",
+    "the request in persian",
+]
+
 
 # ---------------------------------------------------------------------------
 # Dataclass
@@ -155,10 +168,13 @@ class DictationSettings:
     seg_compression: float = 2.0
     seg_logprob: float = -2.0
     # Language handling for Whisper transcription.
-    # "auto" (default) detects the language per utterance from the audio.
-    # A forced ISO code ("en", "fa", ...) is passed to Whisper as the
-    # `language` parameter and guarantees that language regardless of accent.
-    dictation_language: str = "auto"
+    # "en" (default) locks English so accented English speech is never
+    # hallucinated into another script (Persian/Turkish auto-detect
+    # false positives seen in production). Set to "auto" to detect the
+    # language per utterance from the audio, or a forced ISO code
+    # ("fa", ...) to pass that language to Whisper as the `language`
+    # parameter regardless of accent.
+    dictation_language: str = "en"
     # When True, the dictionary "terms" glossary is sent to Whisper as a bias
     # prompt to improve name spelling. OFF by default: a glossary of non-English
     # proper nouns can flip Whisper's language auto-detection (accented English
@@ -237,6 +253,12 @@ class DictationSettings:
     # Users can append known phantom tokens here via settings.json so they do not
     # need to edit source code.
     extra_noise_patterns: tuple = field(default_factory=tuple)
+
+    # quality_guard.py translate-mode meta-text/instruction-echo detector.
+    # Case-insensitive substring patterns; a match rejects the translation.
+    translate_meta_patterns: tuple = field(
+        default_factory=lambda: tuple(_DEFAULT_TRANSLATE_META_PATTERNS)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -330,8 +352,60 @@ def _load_settings() -> DictationSettings:
         if isinstance(patterns, list):
             kwargs["extra_noise_patterns"] = tuple(str(p) for p in patterns)
 
+    if "translate_meta_patterns" in raw:
+        patterns = raw["translate_meta_patterns"]
+        if isinstance(patterns, list):
+            kwargs["translate_meta_patterns"] = tuple(str(p) for p in patterns)
+
     return DictationSettings(**kwargs)
 
 
 # Module-level singleton. Imported directly by consumer modules.
 settings = _load_settings()
+
+
+# ---------------------------------------------------------------------------
+# Runtime persistence helpers (tray + overlay language toggle)
+# ---------------------------------------------------------------------------
+
+def save_setting(key: str, value: Any) -> None:
+    """Persist a single setting to settings.json, preserving all other keys.
+
+    Reads the existing file (if present) so unknown or unrelated keys survive
+    untouched, updates only *key*, and writes atomically (temp file then
+    os.replace) so a crash mid-write cannot corrupt the file. Never rewrites
+    the full set of defaults, only the changed key.
+
+    Calls `user_file` fresh each time (rather than the cached `_SETTINGS_FILE`
+    module constant) so tests can monkeypatch it without reimporting this
+    module.
+    """
+    target = user_file("settings.json")
+    raw: dict[str, Any] = {}
+    if target.exists():
+        try:
+            raw = json.loads(target.read_text(encoding="utf-8"))
+        except Exception as exc:
+            log.warning(
+                "save_setting: failed to read existing settings.json (%s); starting fresh.",
+                exc,
+            )
+            raw = {}
+    raw[key] = value
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, target)
+
+
+def set_dictation_language(lang: str) -> None:
+    """Update the live settings singleton and persist dictation_language.
+
+    DictationSettings is a frozen dataclass, so a plain attribute assignment
+    would raise. object.__setattr__ is the standard escape hatch for this
+    single, controlled mutation. The write is a single attribute assignment,
+    atomic under the GIL, so worker threads reading settings.dictation_language
+    concurrently never see a torn value.
+    """
+    object.__setattr__(settings, "dictation_language", lang)
+    save_setting("dictation_language", lang)
+    log.info("dictation_language set to %r", lang)

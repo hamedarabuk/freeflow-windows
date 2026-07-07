@@ -21,6 +21,9 @@
   "seg_compression": 2.0,
   "seg_logprob": -2.0,
 
+  "_comment_language": "dictation_language: forced ISO code sent to Whisper. Default 'en' locks English so accented speech is never hallucinated into another script. Set to 'auto' to detect per utterance, or 'fa' to force Persian.",
+  "dictation_language": "en",
+
   "cleanup_model": "llama-3.3-70b-versatile",
   "cleanup_timeout_s": 2.0,
   "cleanup_timeout_translate_s": 3.5,

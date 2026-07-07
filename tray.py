@@ -33,6 +33,8 @@ def _make_icon(colour: str) -> Image.Image:
 
 class TrayIcon:
     MODES = ["polished", "brand_voice", "prompt", "note", "raw"]
+    # Language submenu: (display label, dictation_language value).
+    LANGUAGES = [("English", "en"), ("Farsi", "fa"), ("Auto", "auto")]
 
     def __init__(
         self,
@@ -45,6 +47,8 @@ class TrayIcon:
         on_edit_dictionary: Optional[Callable[[], None]] = None,
         on_edit_snippets: Optional[Callable[[], None]] = None,
         on_about: Optional[Callable[[], None]] = None,
+        on_set_language: Optional[Callable[[str], None]] = None,
+        get_dictation_language: Optional[Callable[[], str]] = None,
     ) -> None:
         self._on_pause_toggle = on_pause_toggle
         self._on_force_mode = on_force_mode
@@ -55,6 +59,8 @@ class TrayIcon:
         self._on_edit_dictionary = on_edit_dictionary
         self._on_edit_snippets = on_edit_snippets
         self._on_about = on_about
+        self._on_set_language = on_set_language
+        self._get_dictation_language = get_dictation_language or (lambda: "en")
         self._paused = False
         self._icon: Optional[pystray.Icon] = None
         self._lock = threading.Lock()
@@ -83,6 +89,18 @@ class TrayIcon:
             items.append(pystray.Menu.SEPARATOR)
         items.extend(mode_items)
         items.append(pystray.Menu.SEPARATOR)
+        if self._on_set_language is not None:
+            lang_items = [
+                pystray.MenuItem(
+                    label,
+                    lambda _, v=value: self._on_set_language(v),
+                    checked=lambda item, v=value: self._get_dictation_language() == v,
+                    radio=True,
+                )
+                for label, value in self.LANGUAGES
+            ]
+            items.append(pystray.MenuItem("Language", pystray.Menu(*lang_items)))
+            items.append(pystray.Menu.SEPARATOR)
         if self._on_edit_dictionary is not None:
             items.append(
                 pystray.MenuItem(
@@ -159,3 +177,10 @@ class TrayIcon:
         self._paused = paused
         self._icon.menu = self._build_menu()  # type: ignore[union-attr]
         self._icon.update_menu()  # type: ignore[union-attr]
+
+    def refresh_language(self) -> None:
+        """Rebuild the menu so the Language submenu's radio checkmark reflects
+        the current dictation_language (e.g. after the overlay pill cycles it)."""
+        if self._icon:
+            self._icon.menu = self._build_menu()  # type: ignore[union-attr]
+            self._icon.update_menu()  # type: ignore[union-attr]
