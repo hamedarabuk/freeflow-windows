@@ -31,10 +31,11 @@
 
   "max_prompt_chars": 220,
 
-  "_comment_voice_commands": "Voice commands: whole-transcript exact-match only. action='text' pastes value; action='key' sends a key chord via the keyboard library. Checked before snippets so reserved phrases always win. 'new line' and 'new paragraph' are handled by inline_formatting below.",
+  "_comment_voice_commands": "Voice commands: whole-transcript exact-match only. action='text' pastes value; action='key' sends a key chord via the keyboard library; action='undo_paste' reverses the most recent paste (120s window). Checked before snippets so reserved phrases always win. 'new line' and 'new paragraph' are handled by inline_formatting below.",
   "voice_commands": [
     {"phrases": ["scratch that", "delete that"],          "action": "key",  "value": "ctrl+z"},
-    {"phrases": ["send it", "send message", "send"],      "action": "key",  "value": "enter"}
+    {"phrases": ["send it", "send message", "send"],      "action": "key",  "value": "enter"},
+    {"phrases": ["undo paste", "scratch paste"],          "action": "undo_paste", "value": ""}
   ],
 
   "_comment_inline_formatting": "Inline formatting commands: recognised case-insensitively on word boundaries anywhere in the utterance. The utterance is split at each match; each segment is cleaned separately; breaks become real newlines/Enter presses on injection.",
@@ -105,6 +106,78 @@
       "pattern": "linkedin",
       "mode": "brand_voice",
       "_comment": "LinkedIn in any browser title -> brand_voice"
+    },
+    {
+      "match": "process",
+      "pattern": "outlook.exe",
+      "mode": "polished",
+      "_comment": "Outlook desktop -> polished"
+    },
+    {
+      "match": "process",
+      "pattern": "winword.exe",
+      "mode": "polished",
+      "_comment": "Microsoft Word -> polished"
+    },
+    {
+      "match": "process",
+      "pattern": "thunderbird.exe",
+      "mode": "polished",
+      "_comment": "Thunderbird -> polished"
+    },
+    {
+      "match": "process",
+      "pattern": "slack.exe",
+      "mode": "note",
+      "_comment": "Slack -> note"
+    },
+    {
+      "match": "process_regex",
+      "pattern": "^(teams|ms-teams)\\.exe$",
+      "mode": "note",
+      "_comment": "Microsoft Teams (classic + new) -> note"
+    },
+    {
+      "match": "process",
+      "pattern": "discord.exe",
+      "mode": "note",
+      "_comment": "Discord -> note"
+    },
+    {
+      "match": "process",
+      "pattern": "whatsapp.exe",
+      "mode": "note",
+      "_comment": "WhatsApp desktop -> note"
+    },
+    {
+      "match": "process",
+      "pattern": "notion.exe",
+      "mode": "brand_voice",
+      "_comment": "Notion -> brand_voice"
+    },
+    {
+      "match": "title",
+      "pattern": "gmail",
+      "mode": "polished",
+      "_comment": "Gmail in any browser title -> polished"
+    },
+    {
+      "match": "title",
+      "pattern": "outlook",
+      "mode": "polished",
+      "_comment": "Outlook web in any browser title -> polished"
+    },
+    {
+      "match": "title",
+      "pattern": "x.com",
+      "mode": "note",
+      "_comment": "X (Twitter) in any browser title -> note"
+    },
+    {
+      "match": "title",
+      "pattern": "twitter",
+      "mode": "note",
+      "_comment": "Twitter in any browser title -> note"
     }
   ]
 }

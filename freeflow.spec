@@ -90,7 +90,10 @@ exe = EXE(
                             # will not fire while an elevated window is focused,
                             # which is a non-issue for dictation. Set True only
                             # if a user needs the hotkey inside elevated apps.
-    # icon='assets/freeflow.ico',   # Uncomment once you have a branded icon.
+    icon='freeflow.ico',    # Branded icon at the repo root; baked into the
+                            # exe so Explorer, the taskbar, and the installer
+                            # all show the FreeFlow mark instead of the
+                            # generic PyInstaller icon.
 )
 
 coll = COLLECT(

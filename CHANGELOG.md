@@ -4,6 +4,43 @@ All notable changes to FreeFlow are documented here.
 
 ---
 
+## [2.1.0] (unreleased)
+
+### Added
+
+- Language lock now defaults to English, with an overlay/tray toggle to cycle EN -> FA -> auto.
+- Translate mode gated behind a guard check to stop accidental mistranslation.
+- Session watchdog to recover a stuck or crashed session-mode capture.
+- App-wide file logging (`app.log`, rotating, 1MB x 3 backups) in `%APPDATA%\FreeFlow\logs`, so the frozen build logs even with no console.
+- pytest regression suite covering router, settings, dispatch, undo-paste and overlay processing state.
+- Ten new default router rules: Outlook, Word and Thunderbird -> polished; Slack, Teams (classic and new), Discord and WhatsApp -> note; Notion -> brand_voice; Gmail/Outlook web titles -> polished; X/Twitter titles -> note.
+- Undo last paste: say "undo paste" or "scratch paste", or use the tray menu. Reverses the most recent paste within a 120s window (2000-character cap).
+- Live elapsed-time suffix on the overlay's processing state once a cleanup round-trip passes one second.
+- `settings.json` schema validation: unknown keys and scalar type mismatches are warned about and skipped, rather than silently misapplied.
+- Branded FreeFlow icon baked into the frozen build.
+
+### Changed
+
+- `_dispatch` refactored from one large function into a staged pipeline with a single shared finalisation step, fixing a latent bug where the overlay's RAW badge could go stale on a short-circuit branch.
+- Cleanup-fallback tray toast throttled to once per ten minutes to avoid spam during a run of degraded Groq responses.
+
+---
+
+## 2.0.x (July 2026)
+
+### Added
+
+- Windows installer: no-admin build option, per-user desktop shortcut.
+- User data (`dictionary.json`, `snippets.json`, `settings.json`, `config.json`) moved to `%APPDATA%\FreeFlow`, so app updates never wipe customisations.
+- Single-instance guard: a named mutex stops a second launch from double-running.
+- About window, Help/Report tray items, and a first-run welcome window for member onboarding.
+
+### Fixed
+
+- English speech no longer transcribed as Persian: the Whisper glossary bias that caused this is off by default, and `dictation_language` now locks correctly.
+
+---
+
 ## [2.0.0] — 2026-06-30
 
 ### Added

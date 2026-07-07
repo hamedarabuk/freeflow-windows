@@ -49,6 +49,7 @@ class TrayIcon:
         on_about: Optional[Callable[[], None]] = None,
         on_set_language: Optional[Callable[[str], None]] = None,
         get_dictation_language: Optional[Callable[[], str]] = None,
+        on_undo_paste: Optional[Callable[[], None]] = None,
     ) -> None:
         self._on_pause_toggle = on_pause_toggle
         self._on_force_mode = on_force_mode
@@ -59,6 +60,7 @@ class TrayIcon:
         self._on_edit_dictionary = on_edit_dictionary
         self._on_edit_snippets = on_edit_snippets
         self._on_about = on_about
+        self._on_undo_paste = on_undo_paste
         self._on_set_language = on_set_language
         self._get_dictation_language = get_dictation_language or (lambda: "en")
         self._paused = False
@@ -113,6 +115,13 @@ class TrayIcon:
                 pystray.MenuItem(
                     "Edit snippets",
                     lambda _: self._on_edit_snippets(),
+                )
+            )
+        if self._on_undo_paste is not None:
+            items.append(
+                pystray.MenuItem(
+                    "Undo last paste",
+                    lambda _: self._on_undo_paste(),
                 )
             )
         items.extend([

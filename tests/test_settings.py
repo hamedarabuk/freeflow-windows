@@ -10,6 +10,7 @@ or written.
 from __future__ import annotations
 
 import json
+import logging
 
 import settings as settings_module
 from settings import DictationSettings
@@ -52,6 +53,35 @@ def test_save_setting_updates_only_target_key(isolated_settings_file):
     raw = json.loads(isolated_settings_file.read_text(encoding="utf-8"))
     assert raw["hotkey"] == "3"
     assert raw["dictation_language"] == "en"
+
+
+def test_unknown_key_loads_defaults_and_warns(isolated_settings_file, caplog):
+    isolated_settings_file.write_text(json.dumps({"nonexistent_key": 1}), encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        loaded = settings_module._load_settings()
+    assert loaded == DictationSettings()
+    assert any("nonexistent_key" in r.message for r in caplog.records)
+
+
+def test_scalar_type_mismatch_ignored_default_survives(isolated_settings_file, caplog):
+    isolated_settings_file.write_text(
+        json.dumps({"transcribe_timeout_s": "sixty"}), encoding="utf-8"
+    )
+    with caplog.at_level(logging.WARNING):
+        loaded = settings_module._load_settings()
+    assert loaded.transcribe_timeout_s == DictationSettings().transcribe_timeout_s
+    assert any("transcribe_timeout_s" in r.message for r in caplog.records)
+
+
+def test_comment_key_never_flagged(isolated_settings_file, caplog):
+    isolated_settings_file.write_text(
+        json.dumps({"_comment": "some documentation", "dictation_language": "fa"}),
+        encoding="utf-8",
+    )
+    with caplog.at_level(logging.WARNING):
+        loaded = settings_module._load_settings()
+    assert loaded.dictation_language == "fa"
+    assert not any("_comment" in r.message for r in caplog.records)
 
 
 def test_set_dictation_language_updates_live_singleton_and_file(isolated_settings_file):

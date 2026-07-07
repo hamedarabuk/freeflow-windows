@@ -111,6 +111,12 @@ _recording_lock = threading.Lock()
 # poll loop. Single-writer / single-reader, atomic in CPython so no lock needed.
 _current_audio_level: float = 0.0
 
+# Undo-last-paste state: character count of the most recent paste (Enter
+# keystrokes count as one character each) and the monotonic time it happened.
+# Single-writer / single-reader per dispatch, no lock needed.
+_last_paste_len: int = 0
+_last_paste_ts: float = 0.0
+
 
 def _on_audio_level(rms: float) -> None:
     global _current_audio_level
@@ -581,13 +587,48 @@ def _paste_with_breaks(text: str) -> None:
     keyboard Enter once per newline separator.  Handles leading/trailing
     empty parts (an utterance that resolves to pure newlines still produces
     the correct number of Enter presses).
+
+    Records the total character count that reached the target (pasted
+    characters plus one per Enter keystroke) and the time, for undo-last-paste.
     """
+    global _last_paste_len, _last_paste_ts
     parts = text.split("\n")
+    total_chars = 0
     for i, part in enumerate(parts):
         if part:
             paste_text(part)
+            total_chars += len(part)
         if i < len(parts) - 1:
             keyboard.send("enter")
+            total_chars += 1
+    _last_paste_len = total_chars
+    _last_paste_ts = time.monotonic()
+
+
+def _undo_last_paste() -> None:
+    """Undo the most recently pasted text by sending one backspace per
+    character (an Enter keystroke counts as one character). Guarded by a
+    120s window so a stray "undo paste" long after the fact cannot wipe out
+    unrelated typing done in between."""
+    global _last_paste_len
+    if _last_paste_len == 0:
+        if _tray:
+            _tray.notify("Nothing to undo")
+        log.info("Undo paste: nothing to undo")
+        return
+    elapsed = time.monotonic() - _last_paste_ts
+    if elapsed > 120:
+        if _tray:
+            _tray.notify("Undo window expired")
+        log.info("Undo paste: window expired (%.1fs)", elapsed)
+        return
+    n = min(_last_paste_len, 2000)
+    for _ in range(n):
+        keyboard.send("backspace")
+    _last_paste_len = 0
+    if _tray:
+        _tray.notify("Paste undone")
+    log.info("Undo paste: sent %d backspaces", n)
 
 
 # ---------------------------------------------------------------------------
@@ -784,10 +825,15 @@ def _stage_voice_command(ctx: _DispatchContext) -> Optional[_Outcome]:
         ms_total=ms_total_cmd,
         fallback=False,
     )
+    global _last_paste_len, _last_paste_ts
     if cmd_action == "text":
         paste_text(cmd_value)
+        _last_paste_len = len(cmd_value)
+        _last_paste_ts = time.monotonic()
     elif cmd_action == "key":
         keyboard.send(cmd_value)
+    elif cmd_action == "undo_paste":
+        _undo_last_paste()
     log.info("Dispatched voice command [%s:%s] %dms total", cmd_action, cmd_value, ms_total_cmd)
     return _Outcome(kind="voice_command")
 
@@ -808,7 +854,10 @@ def _stage_snippet(ctx: _DispatchContext) -> Optional[_Outcome]:
         ms_total=ms_total_snippet,
         fallback=False,
     )
+    global _last_paste_len, _last_paste_ts
     paste_text(snippet_expansion)
+    _last_paste_len = len(snippet_expansion)
+    _last_paste_ts = time.monotonic()
     log.info(
         "Dispatched snippet expansion (skipped cleanup) %dms total",
         ms_total_snippet,
@@ -897,6 +946,13 @@ def _stage_cleanup_and_paste(ctx: _DispatchContext) -> _Outcome:
     return _Outcome(kind="cleaned_paste", fallback_badge=fallback)
 
 
+# Cleanup-fallback toast throttle: session mode can produce a burst of RAW
+# fallbacks in a row (for example when Groq is degraded); one toast per ten
+# minutes is informative without being spam.
+_FALLBACK_TOAST_INTERVAL_S = 600.0
+_last_fallback_toast_ts: float = 0.0
+
+
 def _finalise(outcome: _Outcome) -> None:
     """Single shared exit path for every terminal outcome.
 
@@ -905,10 +961,16 @@ def _finalise(outcome: _Outcome) -> None:
     The RAW badge is set from the outcome: the cleanup branch passes the real
     fallback flag, every short-circuit branch passes False. See the LATENT BUG
     note below."""
+    global _last_fallback_toast_ts
     if _tray:
         _tray.set_idle()
         if outcome.tray_notify:
             _tray.notify(outcome.tray_notify)
+        elif outcome.fallback_badge:
+            now = time.monotonic()
+            if now - _last_fallback_toast_ts >= _FALLBACK_TOAST_INTERVAL_S:
+                _last_fallback_toast_ts = now
+                _tray.notify("Cleanup fell back to raw transcript")
     if _overlay:
         # LATENT BUG FIX (flagged to the orchestrator): the pre-refactor code
         # only ever called set_fallback() on the cleanup branch, so a stale
@@ -1189,6 +1251,7 @@ def main() -> None:
         on_about=_on_about,
         on_set_language=_set_dictation_language,
         get_dictation_language=lambda: settings.dictation_language,
+        on_undo_paste=_undo_last_paste,
     )
     _tray.start()
 

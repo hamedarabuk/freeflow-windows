@@ -54,11 +54,13 @@ A system tray icon appears and a small floating gadget sits at the bottom-right 
 | Hold `Alt+1` | Start recording. Release to transcribe + clean + paste. |
 | Double-tap `Alt+1` | Toggle session mode (continuous voice-activity-driven capture). |
 | Click the mode pill | Open dropdown to lock a mode or toggle translate. |
+| Click the language pill | Cycle the dictation language lock: EN -> FA -> auto. Also available from the tray's Language submenu. |
+| Say "undo paste" or "scratch paste" | Undo the most recent paste (one backspace per character, capped at 2000) within 120 seconds. Also available as "Undo last paste" in the tray menu. |
 | Drag the grip bar (top of gadget) | Move the gadget. Position is remembered across restarts. |
 | Right-click the gadget | Open the mode dropdown. |
 | Click the pause icon | Pause / resume dictation. |
 
-The floating gadget shows: a state LED (idle / recording / processing / paused / session), a live audio equaliser whilst recording, a language pill with the last detected input language (EN, FA, FR, etc.), and the current mode.
+The floating gadget shows: a state LED (idle / recording / processing / paused / session), a live audio equaliser whilst recording, a language pill with the last detected input language (EN, FA, FR, etc.), and the current mode. Whilst cleanup is processing, the state label grows a live elapsed-time suffix (e.g. "Processing 1.4s") once the wait passes one second, so a slow round-trip never looks frozen.
 
 ---
 
@@ -66,10 +68,10 @@ The floating gadget shows: a state LED (idle / recording / processing / paused /
 
 | Mode | Auto-trigger | What it does |
 |---|---|---|
-| `polished` | Default (everything else) | Fix filler, false starts, mis-transcriptions, grammar. Preserve speaker voice and rhythm. |
-| `brand_voice` | Obsidian, LinkedIn in browser title | Short sentences, specific nouns, bottom-line up front, no marketing fluff, no AI-sounding copy. |
+| `polished` | Default (everything else); Outlook, Word, Thunderbird; Gmail or Outlook web in browser title | Fix filler, false starts, mis-transcriptions, grammar. Preserve speaker voice and rhythm. |
+| `brand_voice` | Obsidian, Notion, LinkedIn in browser title | Short sentences, specific nouns, bottom-line up front, no marketing fluff, no AI-sounding copy. |
 | `prompt` | Terminal with "claude", "ai", or "llm" in title | Reshape transcript into a terse AI instruction: goal, constraints, output shape. |
-| `note` | Telegram desktop app | Light touch. Fix mis-transcriptions only. Preserve casual tone, fragments, ellipses. |
+| `note` | Telegram, Slack, Teams, Discord, WhatsApp desktop apps; X/Twitter in browser title | Light touch. Fix mis-transcriptions only. Preserve casual tone, fragments, ellipses. |
 | `raw` | VS Code, JetBrains IDEs | Minimal. Only fix transcription errors (homophones, garbled words). Filler and punctuation untouched. |
 
 All modes enforce British English, ban em-dashes, strip a list of AI-cliché phrases, refuse to invent facts, and preserve Persian input as Persian output.
@@ -144,7 +146,10 @@ Run from an elevated PowerShell prompt. The `keyboard` library hooks the global 
 `pystray` needs a display. Confirm the service is not running in a non-interactive Task Scheduler session.
 
 **Cleanup returns the raw transcript.**
-The cleanup falls back to the raw transcript on Groq timeout or error. Check `logs/YYYY-MM-DD.jsonl` for the `fallback: true` rows and any error context. Confirm `GROQ_API_KEY` in `.env` is valid.
+The cleanup falls back to the raw transcript on Groq timeout or error. Check `%APPDATA%\FreeFlow\logs\YYYY-MM-DD.jsonl` for the `fallback: true` rows and any error context. A tray toast also appears (throttled to once per ten minutes so a run of fallbacks doesn't spam you). Confirm `GROQ_API_KEY` in `.env` is valid.
+
+**Where are the logs?**
+All logs live in `%APPDATA%\FreeFlow\logs`: `YYYY-MM-DD.jsonl` (per-dictation history) and `app.log` (general application log, rotated at 1MB, 3 backups kept). Useful when `pythonw.exe` runs with no visible console.
 
 **Transcription is slow.**
 Groq Whisper latency is typically under two seconds for a 10 to 30 second clip. If response times exceed five seconds, check network connectivity to `api.groq.com`.

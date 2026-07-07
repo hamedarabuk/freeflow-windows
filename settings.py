@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any
 
 from paths import user_file
@@ -93,6 +93,79 @@ _DEFAULT_ROUTER_RULES: list[dict[str, Any]] = [
         "pattern": "linkedin",
         "mode": "brand_voice",
     },
+    # Rules 7-16: sensible defaults for common professional apps. Appended
+    # after the rules above so existing behaviour keeps precedence; override
+    # any of these in settings.json's own router_rules list if needed.
+    # Rule 7: Outlook desktop -> polished
+    {
+        "match": "process",
+        "pattern": "outlook.exe",
+        "mode": "polished",
+    },
+    # Rule 8: Microsoft Word -> polished
+    {
+        "match": "process",
+        "pattern": "winword.exe",
+        "mode": "polished",
+    },
+    # Rule 9: Thunderbird -> polished
+    {
+        "match": "process",
+        "pattern": "thunderbird.exe",
+        "mode": "polished",
+    },
+    # Rule 10: Slack -> note
+    {
+        "match": "process",
+        "pattern": "slack.exe",
+        "mode": "note",
+    },
+    # Rule 11: Microsoft Teams (classic + new) -> note
+    {
+        "match": "process_regex",
+        "pattern": r"^(teams|ms-teams)\.exe$",
+        "mode": "note",
+    },
+    # Rule 12: Discord -> note
+    {
+        "match": "process",
+        "pattern": "discord.exe",
+        "mode": "note",
+    },
+    # Rule 13: WhatsApp desktop -> note
+    {
+        "match": "process",
+        "pattern": "whatsapp.exe",
+        "mode": "note",
+    },
+    # Rule 14: Notion -> brand_voice
+    {
+        "match": "process",
+        "pattern": "notion.exe",
+        "mode": "brand_voice",
+    },
+    # Rule 15: Gmail or Outlook web in any browser title -> polished
+    {
+        "match": "title",
+        "pattern": "gmail",
+        "mode": "polished",
+    },
+    {
+        "match": "title",
+        "pattern": "outlook",
+        "mode": "polished",
+    },
+    # Rule 16: X/Twitter in any browser title -> note
+    {
+        "match": "title",
+        "pattern": "x.com",
+        "mode": "note",
+    },
+    {
+        "match": "title",
+        "pattern": "twitter",
+        "mode": "note",
+    },
 ]
 
 
@@ -102,6 +175,8 @@ _DEFAULT_VOICE_COMMANDS: list[dict] = [
     {"phrases": ["send it",
                  "send message",
                  "send"],                  "action": "key",  "value": "enter"},
+    {"phrases": ["undo paste",
+                 "scratch paste"],         "action": "undo_paste", "value": ""},
 ]
 
 # Capture commands: utterances that START WITH one of these phrases are routed
@@ -262,6 +337,58 @@ class DictationSettings:
 
 
 # ---------------------------------------------------------------------------
+# Schema validation
+# ---------------------------------------------------------------------------
+# Field annotations are stored as plain strings by `from __future__ import
+# annotations`, so DictationSettings' scalar fields carry their type name
+# ("int", "float", "str", "bool") rather than the type object. That is all
+# this needs: container fields (router_rules, voice_commands, ...) keep their
+# own isinstance handling below and are skipped here.
+
+_SCALAR_TYPE_NAMES = {"int", "float", "str", "bool"}
+
+
+def _scalar_type_ok(value: Any, expected: str) -> bool:
+    if expected == "bool":
+        return isinstance(value, bool)
+    if expected == "int":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "float":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "str":
+        return isinstance(value, str)
+    return True
+
+
+def _validate_raw_settings(raw: dict[str, Any]) -> set[str]:
+    """Warn (never raise) on unknown top-level keys or scalar type mismatches.
+
+    Keys starting with "_" are treated as inline JSON comments (settings.json.example
+    uses "_comment*" keys for documentation) and are never flagged. Returns the
+    set of key names whose value failed the type check, so the caller can skip
+    them and fall back to the dataclass default.
+    """
+    field_types = {f.name: f.type for f in fields(DictationSettings)}
+    invalid: set[str] = set()
+    for key, value in raw.items():
+        if key.startswith("_"):
+            continue
+        if key not in field_types:
+            log.warning("settings.json: unknown key %r ignored (check for a typo).", key)
+            continue
+        expected = field_types[key]
+        if expected not in _SCALAR_TYPE_NAMES:
+            continue
+        if not _scalar_type_ok(value, expected):
+            log.warning(
+                "settings.json: %r expected %s, got %s; ignoring override.",
+                key, expected, type(value).__name__,
+            )
+            invalid.add(key)
+    return invalid
+
+
+# ---------------------------------------------------------------------------
 # Loader
 # ---------------------------------------------------------------------------
 
@@ -277,7 +404,11 @@ def _load_settings() -> DictationSettings:
         log.warning("Failed to parse settings.json (%s); using defaults.", exc)
         return DictationSettings()
 
-    # Pull known scalar keys; ignore unknown keys silently.
+    invalid_keys = _validate_raw_settings(raw)
+
+    # Pull known scalar keys. Unknown keys and type-mismatched values were
+    # warned about in _validate_raw_settings; mismatches are skipped here so
+    # the dataclass default applies instead of a wrong runtime type.
     kwargs: dict[str, Any] = {}
     scalar_keys = [
         "hotkey",
@@ -304,7 +435,7 @@ def _load_settings() -> DictationSettings:
         "max_prompt_chars",
     ]
     for key in scalar_keys:
-        if key in raw:
+        if key in raw and key not in invalid_keys:
             kwargs[key] = raw[key]
 
     if "router_rules" in raw:

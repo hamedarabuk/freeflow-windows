@@ -16,6 +16,7 @@ Runs on the main thread via the CTk mainloop (called from main.py via run()).
 from __future__ import annotations
 
 import json
+import time
 import tkinter as tk
 from collections import deque
 from pathlib import Path
@@ -68,6 +69,11 @@ _STATE_FILE = Path(__file__).parent / ".overlay-state.json"
 
 _W = 300
 _H = 132       # includes the 14px grip bar at the top
+
+# Fixed width for the state label whilst it carries a live "processing Ns"
+# elapsed-time suffix, so the extra digits don't reflow the row (and the
+# lang pill next to it) on every tick. Reverts to auto-width (0) otherwise.
+_PROCESSING_LABEL_WIDTH = 150
 _GRIP_H = 14
 _MARGIN_RIGHT  = 24
 _MARGIN_BOTTOM = 48
@@ -169,6 +175,7 @@ class Overlay:
         self._on_cycle_language = on_cycle_language
 
         self._state = "idle"
+        self._processing_started: Optional[float] = None
         self._paused = False
         self._last_fallback = False  # True when the last dispatch used the raw transcript
         self._menu_top: Optional[ctk.CTkToplevel] = None
@@ -203,6 +210,11 @@ class Overlay:
 
     def set_state(self, state: str) -> None:
         self._state = state
+        # Recorded synchronously (not deferred to the Tk thread) so the
+        # elapsed clock starts the instant "processing" begins, whichever
+        # thread called this. Cleared on leaving the state so a later
+        # re-entry starts a fresh clock.
+        self._processing_started = time.monotonic() if state == "processing" else None
         if self._root:
             self._root.after(0, self._refresh)
 
@@ -453,7 +465,20 @@ class Overlay:
         else:
             colour = STATE_COLOURS.get(self._state, STATE_COLOURS["idle"])
             self._led.configure(fg_color=colour)
-            self._label_state.configure(text=STATE_LABELS.get(self._state, "Idle"))
+            label_text = STATE_LABELS.get(self._state, "Idle")
+            # Live elapsed-time suffix whilst processing, so a slow cloud
+            # round-trip doesn't look frozen. Only once the wait has run
+            # past 1s, to avoid flicker on fast (sub-1s) round-trips.
+            if self._state == "processing" and self._processing_started is not None:
+                elapsed = time.monotonic() - self._processing_started
+                if elapsed >= 1.0:
+                    label_text = f"{label_text} {elapsed:.1f}s"
+                    self._label_state.configure(width=_PROCESSING_LABEL_WIDTH, anchor="w")
+                else:
+                    self._label_state.configure(width=0)
+            else:
+                self._label_state.configure(width=0)
+            self._label_state.configure(text=label_text)
 
         # Show equaliser whilst recording, otherwise show the state label.
         if self._eq_canvas is not None:
