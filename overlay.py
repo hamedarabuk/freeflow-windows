@@ -53,6 +53,7 @@ STATE_COLOURS = {
     "processing": "#f59e0b",
     "paused":     "#6b7280",
     "session":    "#8b5cf6",
+    "meeting":    "#0ea5e9",
 }
 
 STATE_LABELS = {
@@ -61,6 +62,7 @@ STATE_LABELS = {
     "processing": "Processing...",
     "paused":     "Paused",
     "session":    "Listening (session)",
+    "meeting":    "Meeting notes",
 }
 
 FONT_FAMILY = "Segoe UI Variable"

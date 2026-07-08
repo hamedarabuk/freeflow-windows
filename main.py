@@ -56,6 +56,7 @@ from cleanup import clean, edit_text
 from dictionary import apply_substitutions
 from history import append, last_ten, log_dir
 from paste import paste_text
+from meeting import MeetingRecorder, write_meeting_notes
 from recorder import Recorder
 from router import pick_mode, _get_foreground_info
 from snippets import expand_snippet
@@ -160,6 +161,16 @@ _SHORT_TAP_MAX_MS = settings.short_tap_max_ms
 _session_dispatch_queue: "queue.Queue[Optional[Path]]" = queue.Queue()
 _session_worker: Optional[threading.Thread] = None
 _session_worker_stop = threading.Event()
+
+# Meeting notes mode state (mic-only continuous capture, chunked
+# transcription). Toggled from the tray menu. _meeting_finishing covers the
+# window between "stop" being clicked and meeting-notes.md actually being
+# written (pending transcriptions + summary), during which a further click
+# is refused rather than starting a second recorder.
+_meeting_active = False
+_meeting_finishing = False
+_meeting_lock = threading.Lock()
+_meeting_recorder: Optional[MeetingRecorder] = None
 
 
 def _restore_persisted_state() -> None:
@@ -356,9 +367,14 @@ def _post_dispatch_state() -> str:
 
     In session mode the stream stays open and the indicator must return to
     'session' (showing the equaliser and keeping the eq-tick alive) so the
-    user can see the mic is still active between utterances. In hold-to-talk
+    user can see the mic is still active between utterances. In meeting
+    notes mode it returns to 'meeting' for the same reason. In hold-to-talk
     mode the correct state is 'idle'."""
-    return "session" if _session_active else "idle"
+    if _session_active:
+        return "session"
+    if _meeting_active:
+        return "meeting"
+    return "idle"
 
 
 def _on_session_burst(wav_path: Path) -> None:
@@ -495,6 +511,79 @@ def _on_session_toggle() -> None:
             _session_active = False
             if _tray:
                 _tray.notify(f"Session start failed: {exc}")
+
+
+def _finish_meeting_notes(recorder: MeetingRecorder) -> None:
+    """Background-thread tail of a meeting-notes stop: waits for pending
+    transcriptions, summarises, writes meeting-notes.md, opens it, and
+    notifies the tray. Runs off the tray-click thread since it can block
+    for up to ~120s (pending transcriptions) plus the summary call."""
+    global _meeting_active, _meeting_finishing, _meeting_recorder
+    try:
+        output_path = write_meeting_notes(recorder, _cfg.groq_api_key)
+        os.startfile(str(output_path))
+        if _tray:
+            _tray.notify("Meeting notes saved")
+        log.info("Meeting notes saved: %s", output_path)
+    except Exception as exc:
+        log.error("Meeting notes finish failed: %s", exc)
+        if _tray:
+            _tray.notify(f"Meeting notes failed: {exc}")
+    finally:
+        with _meeting_lock:
+            _meeting_active = False
+            _meeting_finishing = False
+            _meeting_recorder = None
+        if _tray:
+            _tray.refresh_meeting_state()
+            _tray.set_idle()
+        if _overlay:
+            _overlay.set_state(_post_dispatch_state())
+
+
+def _on_meeting_toggle() -> None:
+    """Start or stop meeting notes mode (mic-only continuous capture).
+
+    Refuses to start a second recording whilst one is active or still
+    finishing: the tray menu label only ever offers "Start" when
+    _meeting_active is False, and this guard covers the race where a click
+    lands before the label refreshes."""
+    global _meeting_active, _meeting_finishing, _meeting_recorder
+    with _meeting_lock:
+        if _meeting_finishing:
+            if _tray:
+                _tray.notify("Finishing transcription...")
+            return
+        if _meeting_active:
+            recorder = _meeting_recorder
+            _meeting_finishing = True
+            if _tray:
+                _tray.notify("Finishing transcription...")
+            if _overlay:
+                _overlay.set_state("processing")
+            threading.Thread(
+                target=_finish_meeting_notes, args=(recorder,), daemon=True
+            ).start()
+            return
+
+        try:
+            recorder = MeetingRecorder(api_key=_cfg.groq_api_key, level_callback=_on_audio_level)
+            recorder.start()
+        except Exception as exc:
+            log.error("Meeting notes start failed: %s", exc)
+            if _tray:
+                _tray.notify(f"Meeting notes start failed: {exc}")
+            return
+
+        _meeting_recorder = recorder
+        _meeting_active = True
+        _meeting_finishing = False
+        if _tray:
+            _tray.refresh_meeting_state()
+            _tray.notify("Meeting notes: recording")
+        if _overlay:
+            _overlay.set_state("meeting")
+        log.info("Meeting notes started: %s", recorder.session_dir)
 
 
 def _normalise_cmd(text: str) -> str:
@@ -1429,6 +1518,8 @@ def main() -> None:
         on_set_language=_set_dictation_language,
         get_dictation_language=lambda: settings.dictation_language,
         on_undo_paste=_undo_last_paste,
+        on_meeting_toggle=_on_meeting_toggle,
+        get_meeting_active=lambda: _meeting_active,
     )
     _tray.start()
 

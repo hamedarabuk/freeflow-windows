@@ -285,6 +285,9 @@ class DictationSettings:
     # dictionary.py
     max_prompt_chars: int = 220
 
+    # meeting.py: meeting notes mode, fixed-length mic chunk duration.
+    meeting_chunk_seconds: int = 60
+
     # router.py — list preserved as a tuple of frozen mappings at runtime
     router_rules: tuple = field(
         default_factory=lambda: tuple(
@@ -459,6 +462,7 @@ def _load_settings() -> DictationSettings:
         "cleanup_timeout_per_100_chars_s",
         "max_prompt_chars",
         "local_whisper_model",
+        "meeting_chunk_seconds",
     ]
     for key in scalar_keys:
         if key in raw and key not in invalid_keys:
