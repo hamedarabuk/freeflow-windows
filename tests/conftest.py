@@ -18,6 +18,38 @@ if str(_PROJECT_ROOT) not in sys.path:
 import pytest
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _strip_real_file_logging():
+    """Detach any file handlers from the root logger for the whole test run.
+
+    main.py attaches a RotatingFileHandler pointing at the real
+    %APPDATA%\\FreeFlow\\logs\\app.log at import time, before any test
+    fixture can redirect paths. Without this guard, test-generated warnings
+    (deliberate failure scenarios) leak into the live app.log and pollute
+    real diagnostics. caplog captures records at the logger level, so
+    removing file handlers does not affect assertions.
+    """
+    import logging
+    import logging.handlers
+
+    root = logging.getLogger()
+    removed = [
+        h for h in root.handlers
+        if isinstance(h, logging.FileHandler)
+    ]
+    for h in removed:
+        root.removeHandler(h)
+        h.close()
+
+    # main.py may be imported later in the session; strip again lazily via a
+    # filter that blocks nothing but lets us re-check on first record. Simpler
+    # and robust: patch RotatingFileHandler.emit to a no-op for the session.
+    real_emit = logging.handlers.RotatingFileHandler.emit
+    logging.handlers.RotatingFileHandler.emit = lambda self, record: None
+    yield
+    logging.handlers.RotatingFileHandler.emit = real_emit
+
+
 @pytest.fixture
 def isolated_settings_file(tmp_path, monkeypatch):
     """Redirect settings.py's file-backed state at a tmp_path file.

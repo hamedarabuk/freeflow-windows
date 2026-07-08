@@ -6,4 +6,4 @@ Bump this string before every release, then rebuild and update version.json on
 the distribution server.
 """
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"

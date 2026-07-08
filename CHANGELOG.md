@@ -4,10 +4,14 @@ All notable changes to FreeFlow are documented here.
 
 ---
 
-## [2.1.0] (unreleased)
+## [2.1.0] (8 July 2026)
 
 ### Added
 
+- Voice editing of selected text: select text anywhere, hold the hotkey and say "edit this: make it more formal" (also "rewrite this", "edit selection"). The selection is rewritten by the LLM and pasted in place, undo-able.
+- Meeting notes mode: tray toggle records the microphone in 60-second chunks, transcribes them in the background, and on stop writes and opens a markdown file with a summary (bullets, decisions, action items) and the full transcript.
+- Offline transcription fallback: when Groq is unreachable and the optional faster-whisper package is installed, utterances are transcribed locally instead of being lost.
+- Latency instrumentation: every dispatch logs total/transcribe/cleanup milliseconds; the overlay briefly shows the last round-trip time after each paste.
 - Language lock now defaults to English, with an overlay/tray toggle to cycle EN -> FA -> auto.
 - Translate mode gated behind a guard check to stop accidental mistranslation.
 - Session watchdog to recover a stuck or crashed session-mode capture.
