@@ -25,10 +25,10 @@ from version import __version__
 
 log = logging.getLogger(__name__)
 
-# TODO: replace this URL with your real GitHub Pages / Releases URL once
-# the repository is public and you have uploaded version.json there.
-# Example: "https://raw.githubusercontent.com/hamedarabuk/freeflow-windows/main/version.json"
-VERSION_CHECK_URL = "https://example.com/freeflow/version.json"  # TODO: set before release
+# version.json is served from the public repo's main branch. The file's own
+# "url" field points at the FreeFlow-Setup.exe asset on the matching GitHub
+# Release, so a new release is picked up by bumping version.json on main.
+VERSION_CHECK_URL = "https://raw.githubusercontent.com/hamedarabuk/freeflow-windows/main/version.json"
 
 _CHECK_TIMEOUT_S = 5
 

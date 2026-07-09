@@ -253,13 +253,14 @@ class DictationSettings:
     seg_compression: float = 2.0
     seg_logprob: float = -2.0
     # Language handling for Whisper transcription.
-    # "en" (default) locks English so accented English speech is never
-    # hallucinated into another script (Persian/Turkish auto-detect
-    # false positives seen in production). Set to "auto" to detect the
-    # language per utterance from the audio, or a forced ISO code
-    # ("fa", ...) to pass that language to Whisper as the `language`
-    # parameter regardless of accent.
-    dictation_language: str = "en"
+    # "auto" (default) detects the language per utterance so the app works in
+    # every language a member speaks, and writes it back in that language.
+    # The translate-mode guard (meta-text + length-ratio checks) protects
+    # against the mis-detection confabulation seen in production. Set to a
+    # forced ISO code ("en", "fa", ...) to lock one language and never
+    # auto-detect: recommended for a heavy accent that gets mis-detected.
+    # The overlay language pill and the tray Language menu switch this live.
+    dictation_language: str = "auto"
     # When True, the dictionary "terms" glossary is sent to Whisper as a bias
     # prompt to improve name spelling. OFF by default: a glossary of non-English
     # proper nouns can flip Whisper's language auto-detection (accented English

@@ -16,8 +16,10 @@ import settings as settings_module
 from settings import DictationSettings
 
 
-def test_default_dictation_language_is_en():
-    assert DictationSettings().dictation_language == "en"
+def test_default_dictation_language_is_auto():
+    # The distributed build defaults to auto-detect so it works in every
+    # language a member speaks. A forced code ("en"/"fa") is opt-in.
+    assert DictationSettings().dictation_language == "auto"
 
 
 def test_load_settings_missing_file_returns_defaults(isolated_settings_file):

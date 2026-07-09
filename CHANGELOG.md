@@ -4,6 +4,18 @@ All notable changes to FreeFlow are documented here.
 
 ---
 
+## [2.1.2] (9 July 2026)
+
+### Changed
+
+- Default language is now auto-detect again, so a fresh install works in every language the speaker uses and writes it back in that language. The translate-mode guard added in 2.1.1 protects against mis-detection. Lock a single language any time from the gadget pill or the tray Language menu.
+
+### Fixed
+
+- In-app update checks are wired: the updater now reads `version.json` from the public repo, so members are told when a newer installer is available. (Previously a placeholder URL meant update checks never ran.)
+
+---
+
 ## [2.1.1] (9 July 2026)
 
 ### Changed
