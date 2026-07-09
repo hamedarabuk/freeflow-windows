@@ -94,6 +94,32 @@ Requires `webrtcvad-wheels` (already in requirements.txt). If not installed, dou
 
 ---
 
+## Voice editing ("edit this")
+
+Rewrite any text you can select, in any app, with a spoken instruction:
+
+1. Select the text (mouse or `Ctrl+A`).
+2. Hold `Alt+1` and say **"edit this: make it more formal"**, then release.
+3. The selection is rewritten by the LLM and pasted in its place.
+
+Trigger phrases: `edit this`, `rewrite this`, `edit selection`, each followed by any instruction ("turn into bullet points", "shorten this", "translate to Farsi"). Say **"undo paste"** within two minutes to reverse it. If nothing is selected you get a "No text selected" alert and your clipboard is left untouched.
+
+---
+
+## Meeting notes
+
+Turn FreeFlow into a note-taker: tray icon, then **Meeting notes: start**. The microphone records in 60-second chunks and each chunk is transcribed in the background while the meeting continues. Stop it from the same menu and FreeFlow writes and opens a markdown file with a summary (bullets, decisions, action items) followed by the full transcript.
+
+Sessions are stored in `%APPDATA%\FreeFlow\meetings\<date-time>\`, including a `transcript.partial.txt` that survives a crash mid-meeting. v1 records the microphone only (your side of a call plus whatever the mic picks up).
+
+---
+
+## Notifications
+
+By default FreeFlow only toasts things that need your attention (errors, "Meeting notes saved", undo confirmations). Routine state changes (mode, language, translate, session on/off) are silent because the floating gadget already shows them. Change this from the tray: **Notifications** > All / Important only / Off (`notify_level` in `settings.json`).
+
+---
+
 ## Customise
 
 Two files give you full control without editing code:

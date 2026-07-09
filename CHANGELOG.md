@@ -4,6 +4,19 @@ All notable changes to FreeFlow are documented here.
 
 ---
 
+## [2.1.1] (9 July 2026)
+
+### Changed
+
+- Quiet notifications by default: routine state changes (mode, language, translate, session on/off, pause) no longer toast; the floating gadget already shows them. Errors, undo confirmations, offline fallback, and "Meeting notes saved" still notify.
+- New tray "Notifications" setting: All / Important only (default) / Off, persisted as `notify_level` in `settings.json`.
+
+### Added
+
+- README usage guides for voice editing ("edit this"), meeting notes, and the notification levels.
+
+---
+
 ## [2.1.0] (8 July 2026)
 
 ### Added

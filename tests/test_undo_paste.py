@@ -36,7 +36,11 @@ def fake_keyboard(monkeypatch):
 @pytest.fixture
 def fake_tray(monkeypatch):
     notifications = []
-    monkeypatch.setattr(main, "_tray", SimpleNamespace(notify=lambda msg: notifications.append(msg)))
+    monkeypatch.setattr(
+        main,
+        "_tray",
+        SimpleNamespace(notify=lambda msg, important=False: notifications.append(msg)),
+    )
     return notifications
 
 

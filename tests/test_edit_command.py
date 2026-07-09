@@ -77,7 +77,7 @@ def fake_tray(monkeypatch):
     monkeypatch.setattr(
         main, "_tray",
         SimpleNamespace(
-            notify=lambda msg: notifications.append(msg),
+            notify=lambda msg, important=False: notifications.append(msg),
             set_processing=lambda: None,
         ),
     )

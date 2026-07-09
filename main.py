@@ -264,7 +264,7 @@ def _on_show_last() -> None:
     records = last_ten()
     if not records:
         if _tray:
-            _tray.notify("No dictation history today.")
+            _tray.notify("No dictation history today.", important=True)
         return
     path = log_dir() / f"{time.strftime('%Y-%m-%d')}.jsonl"
     os.startfile(str(path))
@@ -353,7 +353,7 @@ def _on_hide_gadget() -> None:
     if _overlay:
         _overlay.hide()
     if _tray:
-        _tray.notify("Gadget hidden. Click the tray icon to restore.")
+        _tray.notify("Gadget hidden. Click the tray icon to restore.", important=True)
 
 
 def _on_show_gadget() -> None:
@@ -485,11 +485,11 @@ def _on_session_toggle() -> None:
         except ImportError as exc:
             log.error("Session import failed: %s", exc)
             if _tray:
-                _tray.notify("Session needs webrtcvad-wheels. Install + restart.")
+                _tray.notify("Session needs webrtcvad-wheels. Install + restart.", important=True)
             return
         if not is_available():
             if _tray:
-                _tray.notify("webrtcvad-wheels not installed. pip install webrtcvad-wheels")
+                _tray.notify("webrtcvad-wheels not installed. pip install webrtcvad-wheels", important=True)
             return
         try:
             _start_session_worker()
@@ -510,7 +510,7 @@ def _on_session_toggle() -> None:
             _session = None
             _session_active = False
             if _tray:
-                _tray.notify(f"Session start failed: {exc}")
+                _tray.notify(f"Session start failed: {exc}", important=True)
 
 
 def _finish_meeting_notes(recorder: MeetingRecorder) -> None:
@@ -523,12 +523,12 @@ def _finish_meeting_notes(recorder: MeetingRecorder) -> None:
         output_path = write_meeting_notes(recorder, _cfg.groq_api_key)
         os.startfile(str(output_path))
         if _tray:
-            _tray.notify("Meeting notes saved")
+            _tray.notify("Meeting notes saved", important=True)
         log.info("Meeting notes saved: %s", output_path)
     except Exception as exc:
         log.error("Meeting notes finish failed: %s", exc)
         if _tray:
-            _tray.notify(f"Meeting notes failed: {exc}")
+            _tray.notify(f"Meeting notes failed: {exc}", important=True)
     finally:
         with _meeting_lock:
             _meeting_active = False
@@ -552,13 +552,13 @@ def _on_meeting_toggle() -> None:
     with _meeting_lock:
         if _meeting_finishing:
             if _tray:
-                _tray.notify("Finishing transcription...")
+                _tray.notify("Finishing transcription...", important=True)
             return
         if _meeting_active:
             recorder = _meeting_recorder
             _meeting_finishing = True
             if _tray:
-                _tray.notify("Finishing transcription...")
+                _tray.notify("Finishing transcription...", important=True)
             if _overlay:
                 _overlay.set_state("processing")
             threading.Thread(
@@ -572,7 +572,7 @@ def _on_meeting_toggle() -> None:
         except Exception as exc:
             log.error("Meeting notes start failed: %s", exc)
             if _tray:
-                _tray.notify(f"Meeting notes start failed: {exc}")
+                _tray.notify(f"Meeting notes start failed: {exc}", important=True)
             return
 
         _meeting_recorder = recorder
@@ -782,13 +782,13 @@ def _undo_last_paste() -> None:
     global _last_paste_len
     if _last_paste_len == 0:
         if _tray:
-            _tray.notify("Nothing to undo")
+            _tray.notify("Nothing to undo", important=True)
         log.info("Undo paste: nothing to undo")
         return
     elapsed = time.monotonic() - _last_paste_ts
     if elapsed > 120:
         if _tray:
-            _tray.notify("Undo window expired")
+            _tray.notify("Undo window expired", important=True)
         log.info("Undo paste: window expired (%.1fs)", elapsed)
         return
     n = min(_last_paste_len, 2000)
@@ -796,7 +796,7 @@ def _undo_last_paste() -> None:
         keyboard.send("backspace")
     _last_paste_len = 0
     if _tray:
-        _tray.notify("Paste undone")
+        _tray.notify("Paste undone", important=True)
     log.info("Undo paste: sent %d backspaces", n)
 
 
@@ -941,7 +941,7 @@ def _stage_transcribe(ctx: _DispatchContext) -> Optional[_Outcome]:
         now = time.monotonic()
         if _tray and now - _last_offline_toast_ts >= _OFFLINE_TOAST_INTERVAL_S:
             _last_offline_toast_ts = now
-            _tray.notify("Offline transcription")
+            _tray.notify("Offline transcription", important=True)
 
     ctx.t_transcribe_end = time.monotonic()
     ctx.ms_transcribe = int((ctx.t_transcribe_end - ctx.t_rec_end) * 1000)
@@ -979,7 +979,7 @@ def _stage_capture_command(ctx: _DispatchContext) -> Optional[_Outcome]:
                 ctx.text_raw, payload, ms_total_capture,
             )
             if _tray:
-                _tray.notify("Content idea captured.")
+                _tray.notify("Content idea captured.", important=True)
         except Exception as exc:
             log.warning("Capture command subprocess failed: %s", exc)
     else:
@@ -1056,7 +1056,7 @@ def _stage_edit_command(ctx: _DispatchContext) -> Optional[_Outcome]:
         fallback=fallback,
     )
     if tray_notify and _tray:
-        _tray.notify(tray_notify)
+        _tray.notify(tray_notify, important=True)
     if kind == "edit_command":
         log.info("Dispatched edit command [%s] %dms total", instruction, ms_total)
         _log_latency(ctx, 0, ms_total)
@@ -1229,12 +1229,12 @@ def _finalise(outcome: _Outcome) -> None:
     if _tray:
         _tray.set_idle()
         if outcome.tray_notify:
-            _tray.notify(outcome.tray_notify)
+            _tray.notify(outcome.tray_notify, important=True)
         elif outcome.fallback_badge:
             now = time.monotonic()
             if now - _last_fallback_toast_ts >= _FALLBACK_TOAST_INTERVAL_S:
                 _last_fallback_toast_ts = now
-                _tray.notify("Cleanup fell back to raw transcript")
+                _tray.notify("Cleanup fell back to raw transcript", important=True)
     if _overlay:
         # LATENT BUG FIX (flagged to the orchestrator): the pre-refactor code
         # only ever called set_fallback() on the cleanup branch, so a stale

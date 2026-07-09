@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw
 import pystray
 
 from about import SUPPORT_EMAIL, WEBSITE_URL
+import settings as settings_module
 
 ICON_SIZE = 16
 
@@ -35,6 +36,8 @@ class TrayIcon:
     MODES = ["polished", "brand_voice", "prompt", "note", "raw"]
     # Language submenu: (display label, dictation_language value).
     LANGUAGES = [("English", "en"), ("Farsi", "fa"), ("Auto", "auto")]
+    # Notifications submenu: (display label, notify_level value).
+    NOTIFY_LEVELS = [("All", "all"), ("Important only", "important"), ("Off", "silent")]
 
     def __init__(
         self,
@@ -115,6 +118,17 @@ class TrayIcon:
             ]
             items.append(pystray.MenuItem("Language", pystray.Menu(*lang_items)))
             items.append(pystray.Menu.SEPARATOR)
+        notify_items = [
+            pystray.MenuItem(
+                label,
+                lambda _, v=value: settings_module.set_notify_level(v),
+                checked=lambda item, v=value: settings_module.settings.notify_level == v,
+                radio=True,
+            )
+            for label, value in self.NOTIFY_LEVELS
+        ]
+        items.append(pystray.MenuItem("Notifications", pystray.Menu(*notify_items)))
+        items.append(pystray.Menu.SEPARATOR)
         if self._on_edit_dictionary is not None:
             items.append(
                 pystray.MenuItem(
@@ -183,7 +197,20 @@ class TrayIcon:
     def set_processing(self) -> None:
         self._update(COLOUR_PROCESSING, "Dictation: processing...")
 
-    def notify(self, message: str) -> None:
+    def notify(self, message: str, important: bool = False) -> None:
+        """Show a Windows toast, gated by the user's notify_level setting.
+
+        Reads settings.notify_level live at call time via the settings
+        module (not a value cached on this instance), so a change from the
+        Notifications submenu takes effect on the very next call. "all"
+        shows everything, "important" (default) shows only messages the
+        caller flags important=True, "silent" shows none.
+        """
+        level = settings_module.settings.notify_level
+        if level == "silent":
+            return
+        if level == "important" and not important:
+            return
         if self._icon:
             try:
                 self._icon.notify(message, "Dictation")

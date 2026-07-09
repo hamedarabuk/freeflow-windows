@@ -347,6 +347,14 @@ class DictationSettings:
     # behaviour byte-for-byte for all existing users.
     input_backend: str = "keyboard"
 
+    # tray.py: gates Windows toast notifications shown via TrayIcon.notify().
+    # "all" shows every notify() call, "important" (default) shows only
+    # calls the caller flags important=True, "silent" shows none. The
+    # floating gadget already shows routine state changes (pause, mode,
+    # translate, language, session) visually, so "important" is the sensible
+    # default. Also settable live from the tray's Notifications submenu.
+    notify_level: str = "important"
+
     # quality_guard.py
     # "fast"  -> word-count ratio + edit-distance only (default, no extra deps)
     # "full"  -> also runs cosine similarity via sentence-transformers (optional dep)
@@ -374,6 +382,11 @@ class DictationSettings:
 # own isinstance handling below and are skipped here.
 
 _SCALAR_TYPE_NAMES = {"int", "float", "str", "bool"}
+
+# Valid notify_level values. Enforced explicitly in the loader (below) and in
+# set_notify_level, since _validate_raw_settings only checks scalar *types*
+# ("str"), not the closed set of values a given string field may take.
+_VALID_NOTIFY_LEVELS = {"all", "important", "silent"}
 
 
 def _scalar_type_ok(value: Any, expected: str) -> bool:
@@ -516,6 +529,16 @@ def _load_settings() -> DictationSettings:
         if key in raw:
             kwargs[key] = str(raw[key])
 
+    if "notify_level" in raw:
+        level = str(raw["notify_level"])
+        if level in _VALID_NOTIFY_LEVELS:
+            kwargs["notify_level"] = level
+        else:
+            log.warning(
+                "settings.json: notify_level %r not one of %s; falling back to %r.",
+                level, sorted(_VALID_NOTIFY_LEVELS), "important",
+            )
+
     if "extra_noise_patterns" in raw:
         patterns = raw["extra_noise_patterns"]
         if isinstance(patterns, list):
@@ -578,3 +601,22 @@ def set_dictation_language(lang: str) -> None:
     object.__setattr__(settings, "dictation_language", lang)
     save_setting("dictation_language", lang)
     log.info("dictation_language set to %r", lang)
+
+
+def set_notify_level(level: str) -> None:
+    """Update the live settings singleton and persist notify_level.
+
+    Same controlled-mutation pattern as set_dictation_language above. Called
+    directly by the tray's Notifications submenu: no main.py round-trip is
+    needed here, unlike the Language submenu, since there is no overlay
+    state to keep in sync.
+    """
+    if level not in _VALID_NOTIFY_LEVELS:
+        log.warning(
+            "set_notify_level: %r not one of %s; ignoring.",
+            level, sorted(_VALID_NOTIFY_LEVELS),
+        )
+        return
+    object.__setattr__(settings, "notify_level", level)
+    save_setting("notify_level", level)
+    log.info("notify_level set to %r", level)
