@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>FreeFlow, Install and User Guide</title>
+<style>
+@page { size: A4; margin: 18mm 16mm; }
+* { box-sizing: border-box; }
+body { font-family: "Segoe UI", Helvetica, Arial, sans-serif; color: #1c1c1c; line-height: 1.5; font-size: 11pt; margin: 0; }
+.cover { background: #fbfaf7; border-bottom: 4px solid #E8850C; padding: 40px 44px 32px; margin: -0px 0 26px; }
+.cover .kicker { color: #E8850C; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; font-size: 9pt; margin: 0 0 10px; }
+.cover h1 { font-size: 30pt; margin: 0 0 8px; line-height: 1.05; }
+.cover p { font-size: 12pt; color: #444; margin: 6px 0 0; max-width: 60ch; }
+.wrap { padding: 0 44px 40px; }
+h2 { font-size: 16pt; margin: 26px 0 6px; padding-bottom: 5px; border-bottom: 1px solid #e7e2d8; }
+h3 { font-size: 12.5pt; margin: 16px 0 4px; color: #b5650a; }
+ol, ul { margin: 6px 0 6px 20px; padding: 0; }
+li { margin: 5px 0; }
+p { margin: 8px 0; }
+.step { background: #fbfaf7; border-left: 3px solid #E8850C; padding: 10px 14px; margin: 10px 0; border-radius: 2px; }
+.kbd { display: inline-block; background: #1c1c1c; color: #fff; border-radius: 4px; padding: 1px 8px; font-family: Consolas, monospace; font-size: 10pt; }
+.callout { background: #fff6e9; border: 1px solid #f2d3a1; border-radius: 6px; padding: 12px 16px; margin: 14px 0; }
+.callout strong { color: #b5650a; }
+table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 10.5pt; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #e7e2d8; vertical-align: top; }
+th { background: #f4efe6; }
+.tip { color: #555; font-size: 10pt; font-style: italic; }
+footer { margin: 30px 44px 0; padding-top: 12px; border-top: 1px solid #e7e2d8; color: #888; font-size: 9pt; }
+.avoid-break { break-inside: avoid; }
+</style></head>
+<body>
+<div class="cover">
+<p class="kicker">Maker's AI Lab</p>
+<h1>FreeFlow</h1>
+<p>FreeFlow is a hold-to-talk dictation app for Windows. Hold a key, speak, and clean, polished text lands wherever your cursor is: an email, a Word document, your browser, a chat window. It tidies filler words and mishearings automatically. It understands whatever language you speak, English, Persian, Spanish, Arabic, Turkish, French and many more, and writes it back in that same language.</p>
+</div>
+<div class="wrap">
+
+<h2>Install</h2>
+<p>Five short steps to get started.</p>
+
+<div class="step avoid-break">
+<p><strong>1. Download the installer.</strong><br>
+Download <code>FreeFlow-Setup.exe</code>. You will find it as the file attached to this lesson, or at the link provided.</p>
+</div>
+
+<div class="step avoid-break">
+<p><strong>2. Run it.</strong><br>
+Double-click <code>FreeFlow-Setup.exe</code>. Windows may show a blue "Windows protected your PC" screen. This is normal: it happens because the app is new and not yet code-signed. Click "More info", then "Run anyway". It is safe.</p>
+</div>
+
+<div class="step avoid-break">
+<p><strong>3. Install.</strong><br>
+The installer runs. No administrator rights are needed. Tick "Start FreeFlow automatically when I log in" if you want it always ready. Click through to Finish.</p>
+</div>
+
+<div class="step avoid-break">
+<p><strong>4. Add your free Groq key.</strong><br>
+On first launch, a small window asks for a Groq API key. This is what powers the transcription.</p>
+<ol>
+<li>Go to <code>console.groq.com</code>.</li>
+<li>Sign up for a free account.</li>
+<li>Create an API key.</li>
+<li>Copy the key.</li>
+<li>Paste it into FreeFlow and click Save.</li>
+</ol>
+</div>
+
+<div class="callout avoid-break">
+<strong>Two minutes, no card needed.</strong> Getting a Groq key takes about two minutes and needs no credit card. The key is stored privately on your own computer. It is only ever sent to Groq when you dictate.
+</div>
+
+<div class="step avoid-break">
+<p><strong>5. Say hello.</strong><br>
+A short welcome window explains the basics. A tray icon and a small floating gadget appear at the bottom-right of your screen. You are ready to go.</p>
+</div>
+
+<h2>How to use it</h2>
+<p>Once FreeFlow is installed, here is the one motion you will use most.</p>
+
+<h3>Hold, speak, release</h3>
+<p>Select where you want the text to go. Click into an email, a document, or a chat. Hold <span class="kbd">Alt</span> + <span class="kbd">1</span> together, speak your sentence, then let go.</p>
+<p>A moment later, the cleaned text appears at your cursor. There is a short cloud round-trip while this happens, about one to three seconds. The gadget shows a processing state and a running time, so you always know it is working.</p>
+
+<h3>Speak naturally</h3>
+<p>Full stops and commas are added for you. Filler words are removed. Say "new line" or "new paragraph" to add a line break.</p>
+
+<h2>Writing modes</h2>
+<p>FreeFlow adjusts its tone to match the app you are typing into. This happens automatically, with no extra effort from you.</p>
+<table class="avoid-break">
+<tr><th>Mode</th><th>Used in</th><th>What you get</th></tr>
+<tr><td>Polished</td><td>Emails, Word</td><td>Clear and correct</td></tr>
+<tr><td>Brand voice</td><td>LinkedIn, Notion</td><td>Warm and on-brand</td></tr>
+<tr><td>Note</td><td>Slack, Teams, WhatsApp, Telegram</td><td>Short and casual</td></tr>
+<tr><td>Prompt</td><td>AI chat windows</td><td>Literal, unpolished</td></tr>
+<tr><td>Raw</td><td>Code editors</td><td>Exact words, no cleanup</td></tr>
+</table>
+<p class="tip">You can also lock a mode from the gadget if you prefer.</p>
+
+<h2>Languages and translate</h2>
+<p>By default, FreeFlow detects your language automatically and writes it back in the same language. If you would rather choose yourself, click the language pill on the gadget to lock a language: English, Farsi, or Auto.</p>
+<p>Translate mode is a toggle on the gadget. Switch it on, and FreeFlow writes out your speech in British English, whatever language you spoke.</p>
+
+<h2>Hands-free session mode</h2>
+<p>Double-tap <span class="kbd">Alt</span> + <span class="kbd">1</span> to keep the microphone open. Speak in bursts, without holding the key down each time. Double-tap again to stop. This suits longer pieces of writing.</p>
+
+<h2>Voice editing: change text you have already written</h2>
+<p>Select any text in any app. Hold <span class="kbd">Alt</span> + <span class="kbd">1</span> and say an instruction starting with "edit this", "rewrite this", or "edit selection". FreeFlow rewrites the selected text in place.</p>
+<p>Examples:</p>
+<ul>
+<li>"Edit this: make it more formal."</li>
+<li>"Rewrite this as bullet points."</li>
+<li>"Edit this: shorten it."</li>
+<li>"Edit this: translate to Farsi."</li>
+</ul>
+<p>Changed your mind? Say "undo paste" within two minutes to reverse it.</p>
+
+<h2>Meeting notes</h2>
+<p>From the tray icon, choose "Meeting notes: start". FreeFlow records your microphone and transcribes in the background while you talk.</p>
+<p>When you are done, choose "Meeting notes: stop". FreeFlow writes and opens a document: a summary first (key points, decisions, action items), then the full transcript.</p>
+<p class="tip">This version records your microphone only.</p>
+
+<h2>Handy extras</h2>
+<p>A few extra touches worth knowing.</p>
+<table class="avoid-break">
+<tr><th>Feature</th><th>What it does</th></tr>
+<tr><td>Undo last paste</td><td>Say "undo paste", or use the tray menu.</td></tr>
+<tr><td>Notifications</td><td>FreeFlow stays quiet by default and only alerts you to things that matter. Change this under tray, then Notifications.</td></tr>
+<tr><td>Custom words</td><td>Teach FreeFlow names or jargon it keeps getting wrong. Ask in the community for the dictionary file.</td></tr>
+<tr><td>Updates</td><td>Your settings and key survive updates.</td></tr>
+</table>
+
+<h2>If something looks wrong</h2>
+<p>Most hiccups have a quick fix.</p>
+<table class="avoid-break">
+<tr><th>Problem</th><th>What to do</th></tr>
+<tr><td>Nothing appears</td><td>Make sure you held <span class="kbd">Alt</span> + <span class="kbd">1</span> while speaking, then released it. Check the tray icon is running.</td></tr>
+<tr><td>Wrong language</td><td>Click the gadget's language pill and lock your language.</td></tr>
+<tr><td>A strange or garbled sentence</td><td>Rare. FreeFlow falls back to your raw words. Delete it, try again, and speak a little more slowly.</td></tr>
+<tr><td>It feels slow</td><td>The first use in any session can be slower, while it warms up.</td></tr>
+</table>
+
+</div>
+<footer>Maker's AI Lab, FreeFlow member guide. You hold the key, FreeFlow does the typing.</footer>
+</body></html>
