@@ -41,6 +41,14 @@ BG_LANG_PILL     = "#374151"
 BG_TRANSLATE_ON  = "#1e3a8a"
 SEP_COLOUR       = "#3a3a3a"
 
+# Pause button: filled blue-family chip, deliberately distinct from the
+# mic button's outlined red-family circle (see the mic/pause differentiation
+# note in _refresh and _build).
+BG_PAUSE_IDLE    = "#1f2937"
+FG_PAUSE_IDLE    = "#93c5fd"
+BG_PAUSE_ACTIVE  = "#1d4ed8"
+FG_PAUSE_ACTIVE  = "#dbeafe"
+
 FG_PRIMARY       = "#f1f5f9"
 FG_SECONDARY     = "#9ca3af"
 FG_MUTED         = "#6b7280"
@@ -100,6 +108,10 @@ _EQ_W = _EQ_BARS * _EQ_BAR_W + (_EQ_BARS - 1) * _EQ_BAR_GAP  # 40
 _EQ_H = 14
 _EQ_GAIN = 220    # multiplies RMS to map speech (~0.05-0.15) to bar heights
 _EQ_TICK_MS = 50  # 20 Hz redraw
+
+# Compact mode: how long after the pointer leaves the gadget it stays
+# hover-expanded before auto-collapsing back down.
+_HOVER_COLLAPSE_DELAY_MS = 2500
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +175,7 @@ class Overlay:
         get_dictation_language: Optional[Callable[[], str]] = None,
         on_cycle_language: Optional[Callable[[], None]] = None,
         get_last_latency: Optional[Callable[[], Optional[int]]] = None,
+        on_compact_toggle: Optional[Callable[[], None]] = None,
     ) -> None:
         self._on_pause_toggle = on_pause_toggle
         self._on_force_mode = on_force_mode
@@ -183,6 +196,17 @@ class Overlay:
         # Last dispatch's ms_total, for the brief post-dispatch latency
         # suffix on the resting state label.
         self._get_last_latency = get_last_latency or (lambda: None)
+        self._on_compact_toggle = on_compact_toggle
+
+        # Compact mode: collapses the gadget to grip bar + LED + mic button,
+        # hiding the mode pill, hint text, language pill, and badges. Hover
+        # (or the pointer never having left) expands it back temporarily;
+        # it auto-collapses again after _HOVER_COLLAPSE_DELAY_MS of the
+        # pointer being away. Persisted alongside position in
+        # .overlay-state.json (loaded in _build(), like x/y).
+        self._compact = False
+        self._hover_expanded = False
+        self._hover_collapse_job: Optional[str] = None
 
         self._state = "idle"
         self._processing_started: Optional[float] = None
@@ -246,6 +270,25 @@ class Overlay:
         if self._root:
             self._root.after(0, self._refresh)
 
+    def set_compact(self, on: bool) -> None:
+        """Toggle compact mode. Shared by the mode-menu item and the tray
+        menu item (both call the same main.py handler).
+
+        The flag itself flips synchronously here (a single bool, atomic
+        under the GIL) so a caller on another thread, e.g. the tray, can
+        read get_compact() back immediately after this returns. The visual
+        work (row hide/show, window resize, persistence) is marshalled onto
+        the Tk thread, same convention as every other cross-thread setter
+        on this class.
+        """
+        self._compact = bool(on)
+        self._hover_expanded = False
+        if self._root:
+            self._root.after(0, self._apply_compact_and_persist)
+
+    def get_compact(self) -> bool:
+        return self._compact
+
     def set_fallback(self, fallback: bool) -> None:
         """Signal whether the last dispatch fell back to the raw transcript.
 
@@ -301,6 +344,7 @@ class Overlay:
         state = load_state()
         sx = state.get("x")
         sy = state.get("y")
+        self._compact = bool(state.get("compact", False))
         if sx is None or sy is None:
             sw = root.winfo_screenwidth()
             sh = root.winfo_screenheight()
@@ -400,11 +444,11 @@ class Overlay:
 
         self._pause_button = ctk.CTkButton(
             bottom, text="⏸",
-            fg_color="transparent", hover_color=BG_MENU_HOVER,
-            text_color=FG_SECONDARY,
+            fg_color=BG_PAUSE_IDLE, hover_color=BG_MENU_HOVER,
+            text_color=FG_PAUSE_IDLE,
             font=(FONT_FAMILY, 11),
             width=22, height=22,
-            corner_radius=4,
+            corner_radius=6,
             command=self._on_pause_clicked,
         )
         self._pause_button.pack(side="right")
@@ -461,7 +505,20 @@ class Overlay:
         for widget in drag_targets:
             self._bind_drag(widget)
 
+        # Compact mode: hover anywhere on the gadget expands it; the same
+        # widgets as the drag targets above, since a hover boundary check
+        # only needs a widget to attach to, not the drag-specific canvas
+        # quirk (Enter/Leave fire on plain CTk/tk widgets directly).
+        hover_targets = (
+            root, outer, self._grip, self._grip_label, top, bottom,
+            self._led, self._label_state, self._mic_button, self._pause_button,
+        )
+        for widget in hover_targets:
+            self._bind_hover(widget)
+
         self._refresh()
+        if self._compact:
+            self._apply_compact_height()
 
     # ------------------------------------------------------------------
     # State refresh
@@ -526,16 +583,33 @@ class Overlay:
                 if not self._label_state.winfo_ismapped():
                     self._label_state.pack(side="left", padx=(6, 0))
 
+        # Compact mode: hides the mode pill, hint text, language pill, and
+        # badges (see set_compact's docstring). Hover-expand shows them all
+        # again temporarily without leaving compact mode.
+        expanded = (not self._compact) or self._hover_expanded
+
         # Mode pill
-        if self._paused:
-            self._mode_button.configure(text="PAUSED  ▾")
-        else:
-            forced = self._get_forced()
-            if forced:
-                self._mode_button.configure(text=f"{_format_mode_label(forced)}  ▾")
+        if expanded:
+            if not self._mode_button.winfo_ismapped():
+                self._mode_button.pack(fill="x", padx=10, pady=(6, 0))
+            if self._paused:
+                self._mode_button.configure(text="PAUSED  ▾")
             else:
-                auto = self._get_auto_mode()
-                self._mode_button.configure(text=f"AUTO · {_format_mode_label(auto)}  ▾")
+                forced = self._get_forced()
+                if forced:
+                    self._mode_button.configure(text=f"{_format_mode_label(forced)}  ▾")
+                else:
+                    auto = self._get_auto_mode()
+                    self._mode_button.configure(text=f"AUTO · {_format_mode_label(auto)}  ▾")
+        elif self._mode_button.winfo_ismapped():
+            self._mode_button.pack_forget()
+
+        # Hint text ("Alt + 1 to talk"): same compact/expanded gate.
+        if expanded:
+            if not self._label_hint.winfo_ismapped():
+                self._label_hint.pack(side="left")
+        elif self._label_hint.winfo_ismapped():
+            self._label_hint.pack_forget()
 
         # Language pill: shows the dictation-language LOCK, not the detected
         # language. Always visible (it is a control, not transient
@@ -549,27 +623,41 @@ class Overlay:
         else:
             pill_text = lock_upper
         self._lang_pill.configure(text=pill_text)
-        if not self._lang_pill.winfo_ismapped():
-            self._lang_pill.pack(side="right", pady=(2, 0))
+        if expanded:
+            if not self._lang_pill.winfo_ismapped():
+                self._lang_pill.pack(side="right", pady=(2, 0))
+        elif self._lang_pill.winfo_ismapped():
+            self._lang_pill.pack_forget()
 
-        # Translate badge
-        if self._get_translate():
+        # Translate badge (compact mode hides it regardless of the flag).
+        if expanded and self._get_translate():
             if not self._translate_badge.winfo_ismapped():
                 self._translate_badge.pack(side="right", padx=(0, 6))
         else:
             if self._translate_badge.winfo_ismapped():
                 self._translate_badge.pack_forget()
 
-        # Fallback badge: visible when the last dispatch used the raw transcript.
-        if self._last_fallback:
+        # Fallback badge: visible when the last dispatch used the raw
+        # transcript (compact mode hides it regardless).
+        if expanded and self._last_fallback:
             if not self._fallback_badge.winfo_ismapped():
                 self._fallback_badge.pack(side="right", padx=(0, 4))
         else:
             if self._fallback_badge.winfo_ismapped():
                 self._fallback_badge.pack_forget()
 
-        # Pause glyph
-        self._pause_button.configure(text="▶" if self._paused else "⏸")
+        # Pause glyph + colour. A filled rounded-square chip in a cool blue
+        # family, distinct from the mic button's outlined red-family circle
+        # beside it, so the two adjacent, similarly sized controls cannot be
+        # mistaken for one another at a glance.
+        if self._paused:
+            self._pause_button.configure(
+                text="▶", fg_color=BG_PAUSE_ACTIVE, text_color=FG_PAUSE_ACTIVE,
+            )
+        else:
+            self._pause_button.configure(
+                text="⏸", fg_color=BG_PAUSE_IDLE, text_color=FG_PAUSE_IDLE,
+            )
 
         # Mic button: shows the current session state. Active = solid
         # red disc with no border; idle = grey outlined ring (visible
@@ -625,6 +713,98 @@ class Overlay:
                     x, _EQ_H - h, x + _EQ_BAR_W, _EQ_H,
                 )
         self._root.after(_EQ_TICK_MS, self._eq_tick)
+
+    # ------------------------------------------------------------------
+    # Compact mode
+    # ------------------------------------------------------------------
+
+    def _apply_compact_and_persist(self) -> None:
+        state = load_state()
+        state["compact"] = self._compact
+        _save_state(state)
+        self._refresh()
+        self._apply_compact_height()
+
+    def _apply_compact_height(self) -> None:
+        """Resize the window to fit whatever rows _refresh() left visible.
+
+        Height is read back from Tk's own layout (winfo_reqheight) rather
+        than a hardcoded constant, so it always matches the actual packed
+        content. Uses the same raw wm-geometry call as _move_window, for
+        the same reason: CTk's Python-level geometry() can silently misapply
+        DPI scaling on Windows for a plain resize.
+        """
+        if self._root is None:
+            return
+        self._root.update_idletasks()
+        x = self._root.winfo_x()
+        y = self._root.winfo_y()
+        if self._compact and not self._hover_expanded:
+            target_h = self._root.winfo_reqheight()
+        else:
+            target_h = _H
+        try:
+            self._root.tk.call("wm", "geometry", self._root._w, f"{_W}x{target_h}+{x}+{y}")
+        except Exception:
+            pass
+
+    def _bind_hover(self, widget) -> None:
+        """Bind Enter/Leave on a widget (and its inner canvas, if any) for
+        compact-mode hover-expand. add='+' so these never clobber any other
+        bindings already on shared widgets (e.g. the drag bindings)."""
+        targets = [widget]
+        inner = getattr(widget, "_canvas", None)
+        if inner is not None and inner is not widget:
+            targets.append(inner)
+        for t in targets:
+            try:
+                t.bind("<Enter>", self._on_hover_enter, add="+")
+                t.bind("<Leave>", self._on_hover_leave, add="+")
+            except Exception:
+                pass
+
+    def _cancel_hover_collapse(self) -> None:
+        if self._hover_collapse_job is not None and self._root is not None:
+            try:
+                self._root.after_cancel(self._hover_collapse_job)
+            except Exception:
+                pass
+            self._hover_collapse_job = None
+
+    def _on_hover_enter(self, _event=None) -> None:
+        if not self._compact:
+            return
+        self._cancel_hover_collapse()
+        if not self._hover_expanded:
+            self._hover_expanded = True
+            self._refresh()
+            self._apply_compact_height()
+
+    def _on_hover_leave(self, _event=None) -> None:
+        if not self._compact or not self._hover_expanded or self._root is None:
+            return
+        # Moving between the gadget's own child widgets fires a spurious
+        # Leave at every internal boundary crossing (each CTk/tk widget is
+        # its own window under the hood); only actually schedule a collapse
+        # once the pointer is outside the window's own screen rectangle.
+        try:
+            px, py = self._root.winfo_pointerx(), self._root.winfo_pointery()
+            wx, wy = self._root.winfo_rootx(), self._root.winfo_rooty()
+            ww, wh = self._root.winfo_width(), self._root.winfo_height()
+        except Exception:
+            return
+        if wx <= px <= wx + ww and wy <= py <= wy + wh:
+            return
+        self._cancel_hover_collapse()
+        self._hover_collapse_job = self._root.after(
+            _HOVER_COLLAPSE_DELAY_MS, self._collapse_after_hover
+        )
+
+    def _collapse_after_hover(self) -> None:
+        self._hover_collapse_job = None
+        self._hover_expanded = False
+        self._refresh()
+        self._apply_compact_height()
 
     def _persist_forced_and_refresh(self, mode: Optional[str]) -> None:
         state = load_state()
@@ -726,6 +906,15 @@ class Overlay:
             _toggle_t,
             active=translate_on,
         )
+        _add_separator()
+
+        def _toggle_compact() -> None:
+            self._close_menu()
+            if self._on_compact_toggle is not None:
+                self._on_compact_toggle()
+
+        compact_check = "✓ " if self._compact else "    "
+        _add_item(f"{compact_check}Compact mode", _toggle_compact, active=self._compact)
         _add_separator()
         _add_item("Hide gadget", _hide)
         _add_item("Quit dictation service", _quit)

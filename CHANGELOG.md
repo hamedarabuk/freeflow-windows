@@ -4,6 +4,20 @@ All notable changes to FreeFlow are documented here.
 
 ---
 
+## [2.2.0] (14 July 2026)
+
+### Added
+
+- Compact gadget mode: collapses the floating gadget to a slim bar (drag grip, state light, mic button). Toggle it from the gadget's mode menu or the tray's "Compact gadget" item. Hovering expands the full panel temporarily; it auto-collapses again after the pointer leaves. The choice is remembered between sessions.
+- Mid-recording cancel: press Esc while holding Alt+1 to abandon a dictation; the clip is discarded and nothing is transcribed or pasted. Esc is only intercepted while a recording is in flight.
+- The first-run welcome dialog now offers an optional brand or business name field, so Brand voice mode works out of the box instead of requiring a hand edit of settings.json.
+
+### Changed
+
+- The pause button is now visually distinct from the mic (session) button: blue family against the mic's red family, so the two adjacent controls cannot be mistaken at a glance.
+
+---
+
 ## [2.1.3] (14 July 2026)
 
 ### Fixed

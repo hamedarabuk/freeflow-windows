@@ -16,6 +16,7 @@ import webbrowser
 
 from about import SUPPORT_EMAIL, WEBSITE_URL
 from paths import user_file
+from settings import set_brand_name
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ def _show_dialog() -> None:
         pass
 
     root.update_idletasks()
-    w, h = 460, 320
+    w, h = 460, 360
     sw = root.winfo_screenwidth()
     sh = root.winfo_screenheight()
     root.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
@@ -63,6 +64,21 @@ def _show_dialog() -> None:
 
     tk.Label(
         root,
+        text="Brand or business name (for Brand voice mode, optional):",
+        wraplength=420,
+        justify="left",
+        font=("Segoe UI", 10),
+    ).pack(padx=20, pady=(8, 2), anchor="w")
+    brand_var = tk.StringVar()
+    tk.Entry(
+        root,
+        textvariable=brand_var,
+        width=40,
+        font=("Segoe UI", 10),
+    ).pack(padx=20, pady=(0, 4), anchor="w")
+
+    tk.Label(
+        root,
         text=f"Help and updates: hamedarab.academy   |   Support: {SUPPORT_EMAIL}",
         wraplength=420,
         justify="left",
@@ -74,6 +90,12 @@ def _show_dialog() -> None:
         webbrowser.open(WEBSITE_URL)
 
     def _close() -> None:
+        name = brand_var.get().strip()
+        if name:
+            try:
+                set_brand_name(name)
+            except Exception as exc:
+                log.warning("Failed to persist brand_name: %s", exc)
         root.destroy()
 
     btn_frame = tk.Frame(root)

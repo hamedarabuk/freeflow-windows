@@ -370,6 +370,17 @@ def _on_show_gadget() -> None:
         _overlay.show()
 
 
+def _on_compact_toggle() -> None:
+    """Shared handler for the gadget mode-menu 'Compact mode' item and the
+    tray 'Compact gadget' item: flips the overlay's compact flag and keeps
+    the tray checkmark in sync whichever surface triggered it."""
+    if _overlay:
+        _overlay.set_compact(not _overlay.get_compact())
+        log.info("Compact mode %s", "ON" if _overlay.get_compact() else "OFF")
+    if _tray:
+        _tray.refresh_compact_state()
+
+
 def _post_dispatch_state() -> str:
     """Return the overlay state to restore after a dispatch completes.
 
@@ -1432,6 +1443,66 @@ def _on_alt1_press(event) -> bool:
     if _overlay:
         _overlay.set_state("recording")
     _recorder.start()
+    _arm_esc_cancel()
+    return False
+
+
+# --------------------------------------------------------------------------- #
+# Mid-recording cancel (Esc)                                                   #
+#                                                                              #
+# The Esc hook exists ONLY while a hold-to-talk recording is in flight: armed  #
+# right after recorder.start(), disarmed on normal release or on the cancel    #
+# itself. Esc is never intercepted at any other time. Session-mode utterances  #
+# are not cancellable this way (the VAD stream owns them); hold-to-talk only.  #
+# --------------------------------------------------------------------------- #
+
+_esc_hook = None  # keyboard hook handle, non-None only during a recording
+
+
+def _arm_esc_cancel() -> None:
+    global _esc_hook
+    if _esc_hook is not None:
+        return
+    try:
+        _esc_hook = keyboard.on_press_key("esc", _on_esc_cancel, suppress=True)
+    except Exception as exc:
+        log.warning("Esc cancel hook failed to arm: %s", exc)
+        _esc_hook = None
+
+
+def _disarm_esc_cancel() -> None:
+    global _esc_hook
+    if _esc_hook is None:
+        return
+    try:
+        keyboard.unhook(_esc_hook)
+    except Exception:
+        pass
+    _esc_hook = None
+
+
+def _on_esc_cancel(event) -> bool:
+    """Cancel the in-flight hold-to-talk recording: stop the recorder,
+    delete the clip, dispatch nothing, return the UI to idle. Returns False
+    (swallow Esc) when a recording was cancelled, True otherwise."""
+    global _recording_active
+    with _recording_lock:
+        if not _recording_active:
+            _disarm_esc_cancel()
+            return True
+        _recording_active = False
+    _disarm_esc_cancel()
+    try:
+        wav = _recorder.stop()
+        if wav is not None:
+            wav.unlink(missing_ok=True)
+    except Exception as exc:
+        log.warning("Recorder stop on Esc cancel failed: %s", exc)
+    log.info("Recording cancelled (Esc), clip discarded")
+    if _tray:
+        _tray.set_idle()
+    if _overlay:
+        _overlay.set_state("idle")
     return False
 
 
@@ -1473,6 +1544,7 @@ def _on_alt1_release(event) -> bool:
                 _last_tap_release_time = now
             return False
         _recording_active = False
+    _disarm_esc_cancel()
     log.debug("Recording stopped")
     wav = _recorder.stop()
 
@@ -1567,6 +1639,8 @@ def main() -> None:
         on_undo_paste=_undo_last_paste,
         on_meeting_toggle=_on_meeting_toggle,
         get_meeting_active=lambda: _meeting_active,
+        on_compact_toggle=_on_compact_toggle,
+        get_compact=lambda: _overlay.get_compact() if _overlay else False,
     )
     _tray.start()
 
@@ -1586,6 +1660,7 @@ def main() -> None:
         get_dictation_language=lambda: settings.dictation_language,
         on_cycle_language=_cycle_dictation_language,
         get_last_latency=lambda: (get_recent_latency_ms() or (None, None))[0],
+        on_compact_toggle=_on_compact_toggle,
     )
 
     if settings.input_backend == "pynput":

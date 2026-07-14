@@ -604,6 +604,18 @@ def set_dictation_language(lang: str) -> None:
     log.info("dictation_language set to %r", lang)
 
 
+def set_brand_name(name: str) -> None:
+    """Update the live settings singleton and persist brand_name.
+
+    Same controlled-mutation pattern as set_dictation_language above. Called
+    from the first-run welcome dialog when the user supplies a brand or
+    business name for Brand voice mode.
+    """
+    object.__setattr__(settings, "brand_name", name)
+    save_setting("brand_name", name)
+    log.info("brand_name set to %r", name)
+
+
 def set_notify_level(level: str) -> None:
     """Update the live settings singleton and persist notify_level.
 

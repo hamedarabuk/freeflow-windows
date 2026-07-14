@@ -55,6 +55,8 @@ class TrayIcon:
         on_undo_paste: Optional[Callable[[], None]] = None,
         on_meeting_toggle: Optional[Callable[[], None]] = None,
         get_meeting_active: Optional[Callable[[], bool]] = None,
+        on_compact_toggle: Optional[Callable[[], None]] = None,
+        get_compact: Optional[Callable[[], bool]] = None,
     ) -> None:
         self._on_pause_toggle = on_pause_toggle
         self._on_force_mode = on_force_mode
@@ -70,6 +72,8 @@ class TrayIcon:
         self._get_dictation_language = get_dictation_language or (lambda: "en")
         self._on_meeting_toggle = on_meeting_toggle
         self._get_meeting_active = get_meeting_active or (lambda: False)
+        self._on_compact_toggle = on_compact_toggle
+        self._get_compact = get_compact or (lambda: False)
         self._paused = False
         self._icon: Optional[pystray.Icon] = None
         self._lock = threading.Lock()
@@ -93,6 +97,15 @@ class TrayIcon:
                     "Show gadget",
                     lambda _: self._on_show_gadget(),
                     default=True,
+                )
+            )
+            items.append(pystray.Menu.SEPARATOR)
+        if self._on_compact_toggle is not None:
+            items.append(
+                pystray.MenuItem(
+                    "Compact gadget",
+                    lambda _: self._on_compact_toggle(),
+                    checked=lambda item: self._get_compact(),
                 )
             )
             items.append(pystray.Menu.SEPARATOR)
@@ -236,6 +249,14 @@ class TrayIcon:
     def refresh_meeting_state(self) -> None:
         """Rebuild the menu so the meeting notes label reflects the current
         start/stop state."""
+        if self._icon:
+            self._icon.menu = self._build_menu()  # type: ignore[union-attr]
+            self._icon.update_menu()  # type: ignore[union-attr]
+
+    def refresh_compact_state(self) -> None:
+        """Rebuild the menu so the Compact gadget checkmark reflects the
+        current state (compact can also be toggled from the gadget's own
+        mode menu, not just this tray item)."""
         if self._icon:
             self._icon.menu = self._build_menu()  # type: ignore[union-attr]
             self._icon.update_menu()  # type: ignore[union-attr]
