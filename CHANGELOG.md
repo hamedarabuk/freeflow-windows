@@ -4,6 +4,15 @@ All notable changes to FreeFlow are documented here.
 
 ---
 
+## [2.1.3] (14 July 2026)
+
+### Fixed
+
+- Holding Alt+1 to dictate could type "1" repeatedly into the focused app (most visibly Telegram's message box) during the hold, with the transcript still pasting correctly on release. The hotkey char is now suppressed at OS level for the whole hold: the combo is claimed once on the first press and stays claimed until release, instead of re-reading the Alt key state on every key repeat (Alt could read released a beat before the "1" physically was, leaking raw characters). A bare tap of "1" without Alt still types normally everywhere.
+- The experimental pynput backend (inactive by default) is now documented as unable to suppress the hotkey char, and logs a warning if enabled.
+
+---
+
 ## [2.1.2] (9 July 2026)
 
 ### Changed

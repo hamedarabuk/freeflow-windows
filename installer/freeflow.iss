@@ -31,7 +31,7 @@
 ;     dist\FreeFlow\FreeFlow.exe   (and the rest of the dist\FreeFlow\ folder)
 
 #define AppName      "FreeFlow"
-#define AppVersion   "2.1.2"
+#define AppVersion   "2.1.3"
 #define AppPublisher "Hamed Arab Choobdar"
 #define AppURL       "https://github.com/hamedarabuk/freeflow-windows"
 #define AppExeName   "FreeFlow.exe"

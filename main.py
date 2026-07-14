@@ -111,6 +111,14 @@ _detected_language: str = ""
 _recording_active = False
 _recording_lock = threading.Lock()
 
+# Set True whenever a KEY_DOWN of the hotkey char is claimed as part of the
+# Alt+<hotkey> combo (modifier held), so the matching KEY_UP is suppressed
+# too. Keeps a bare, un-modified press of the hotkey char typing normally.
+# Sticky for the whole hold: once claimed, every KEY_DOWN repeat is
+# suppressed without re-checking is_pressed(modifier) (see _on_alt1_press),
+# so a mid-hold Alt-release race can never leak the raw char.
+_hotkey_claimed = False
+
 # Live audio level (0..~1), written by the audio thread, read by the overlay
 # poll loop. Single-writer / single-reader, atomic in CPython so no lock needed.
 _current_audio_level: float = 0.0
@@ -1300,7 +1308,16 @@ def _dispatch(wav_path: Path) -> None:
 #   windows.  Marked EXPERIMENTAL until broader test coverage.
 
 def _wire_pynput_backend() -> None:
-    """Register pynput Listener for Alt+1 hold-to-talk. EXPERIMENTAL."""
+    """Register pynput Listener for Alt+1 hold-to-talk. EXPERIMENTAL.
+
+    Known defect: pynput's plain keyboard.Listener has no suppression hook
+    on this path (that requires a win32_event_filter callback, not wired
+    here), so _on_alt1_press/_on_alt1_release's return values are ignored
+    and every hotkey char keystroke reaches the focused app for the whole
+    hold, e.g. "1111..." typed into Telegram's message box while dictating.
+    This backend is inactive by default (input_backend="keyboard"); do not
+    switch to it until real suppression is implemented.
+    """
     global _PYNPUT_ACTIVE, _pynput_listener
     try:
         from pynput import keyboard as _pynput_kb
@@ -1310,8 +1327,8 @@ def _wire_pynput_backend() -> None:
             "Run: pip install pynput  (or see requirements-optional.txt). "
             "Falling back to the keyboard library."
         )
-        keyboard.on_press_key(settings.hotkey, _on_alt1_press, suppress=False)
-        keyboard.on_release_key(settings.hotkey, _on_alt1_release, suppress=False)
+        keyboard.on_press_key(settings.hotkey, _on_alt1_press, suppress=True)
+        keyboard.on_release_key(settings.hotkey, _on_alt1_release, suppress=True)
         return
 
     # Map the hotkey string to a pynput Key. Currently only Alt+1 is
@@ -1365,24 +1382,49 @@ def _wire_pynput_backend() -> None:
         "Note: does not fire in elevated windows (Task Manager, UAC dialogs).",
         _hotkey_char,
     )
+    log.warning(
+        "pynput backend cannot suppress the hotkey char: Alt+%s will type "
+        "'%s' repeatedly into the focused app for the duration of the hold. "
+        "Use input_backend='keyboard' (the default) unless you accept that.",
+        _hotkey_char, _hotkey_char,
+    )
 
 
-def _on_alt1_press(event) -> None:
-    global _recording_active, _press_start_time
-    if _paused:
-        return
+def _on_alt1_press(event) -> bool:
+    """Return True to let the raw keystroke through, False to swallow it.
+
+    Only suppresses the hotkey char while the modifier is held (the actual
+    Alt+<hotkey> combo); a bare press of the char is left untouched so it
+    still types normally everywhere, e.g. in Telegram's message box.
+
+    Windows re-fires KEY_DOWN for a held key (key-repeat, ~30/s) while it
+    stays down. Once a hold is claimed below, every repeat is suppressed
+    immediately without re-testing is_pressed(modifier): that per-repeat
+    re-test used to race Alt's key-up (Alt can read released a beat before
+    the char physically is), so the tail of a long hold leaked raw "1"
+    characters into the focused app (e.g. Telegram's message box). The
+    claim only clears on release (_on_alt1_release), so a bare, un-modified
+    tap of the char still types normally afterwards.
+    """
+    global _recording_active, _press_start_time, _hotkey_claimed
+    if _hotkey_claimed:
+        # Repeat KEY_DOWN of an already-claimed hold: keep suppressing.
+        return False
     if not keyboard.is_pressed(settings.hotkey_modifier):
-        return
+        return True
+    _hotkey_claimed = True
+    if _paused:
+        return False
     if _session_active:
         # During session mode the hold-to-talk path is suppressed; only
         # the release-side double-tap detector fires to toggle the
         # session back off.
         _press_start_time = time.monotonic()
-        return
+        return False
     _press_start_time = time.monotonic()
     with _recording_lock:
         if _recording_active:
-            return
+            return False
         _recording_active = True
     log.debug("Recording started")
     if _tray:
@@ -1390,10 +1432,14 @@ def _on_alt1_press(event) -> None:
     if _overlay:
         _overlay.set_state("recording")
     _recorder.start()
+    return False
 
 
-def _on_alt1_release(event) -> None:
-    global _recording_active, _last_tap_release_time
+def _on_alt1_release(event) -> bool:
+    global _recording_active, _last_tap_release_time, _hotkey_claimed
+    if not _hotkey_claimed:
+        return True
+    _hotkey_claimed = False
     now = time.monotonic()
     press_duration_ms = (now - _press_start_time) * 1000 if _press_start_time else 9999
 
@@ -1405,9 +1451,9 @@ def _on_alt1_release(event) -> None:
             if time_since_last_tap_ms < _DOUBLE_TAP_WINDOW_MS:
                 _last_tap_release_time = 0.0
                 _on_session_toggle()
-                return
+                return False
             _last_tap_release_time = now
-        return
+        return False
 
     # Out-of-session: hold-to-talk path. Stop the recorder first so a
     # double-tap sequence doesn't keep the stream open.
@@ -1423,9 +1469,9 @@ def _on_alt1_release(event) -> None:
                     _last_tap_release_time = 0.0
                     log.info("Double-tap detected, entering session mode")
                     _on_session_toggle()
-                    return
+                    return False
                 _last_tap_release_time = now
-            return
+            return False
         _recording_active = False
     log.debug("Recording stopped")
     wav = _recorder.stop()
@@ -1441,7 +1487,7 @@ def _on_alt1_release(event) -> None:
             if _overlay:
                 _overlay.set_state("idle")
             _on_session_toggle()
-            return
+            return False
         _last_tap_release_time = now
 
     if wav is None:
@@ -1450,8 +1496,9 @@ def _on_alt1_release(event) -> None:
             _tray.set_idle()
         if _overlay:
             _overlay.set_state("idle")
-        return
+        return False
     threading.Thread(target=_dispatch, args=(wav,), daemon=True).start()
+    return False
 
 
 _singleton_mutex = None  # named mutex kept alive for the whole process lifetime
@@ -1544,10 +1591,13 @@ def main() -> None:
     if settings.input_backend == "pynput":
         _wire_pynput_backend()
     else:
-        # Default: keyboard library. Behaviour is byte-for-byte identical to
-        # the original code.  Admin rights required on Windows.
-        keyboard.on_press_key(settings.hotkey, _on_alt1_press, suppress=False)
-        keyboard.on_release_key(settings.hotkey, _on_alt1_release, suppress=False)
+        # Default: keyboard library. suppress=True blocks the hotkey char at
+        # the OS level while Alt is held, so it never leaks into the focused
+        # app (e.g. "1" typed into Telegram); _on_alt1_press/_on_alt1_release
+        # return False only for that combo, so a bare press of the char is
+        # untouched. Admin rights required on Windows.
+        keyboard.on_press_key(settings.hotkey, _on_alt1_press, suppress=True)
+        keyboard.on_release_key(settings.hotkey, _on_alt1_release, suppress=True)
 
     log.info(
         "FreeFlow dictation running. Alt+1 = hold-to-talk. "
