@@ -218,7 +218,13 @@ _DEFAULT_INLINE_FORMATTING: list[dict] = [
 # settings.json without touching source code.
 _DEFAULT_TRANSLATE_META_PATTERNS: list[str] = [
     "i should say in english",
-    "as an ai",
+    # Assistant self-reference only. A bare "as an ai" substring falsely
+    # rejected legitimate dictation ABOUT AI ("as an AI self-consultant",
+    # production fallback 2026-07-13), so the patterns pin the meta phrasing.
+    "as an ai language model",
+    "as an ai assistant",
+    "as an ai model",
+    "as an ai, i",
     "here is the translation",
     "the request in persian",
 ]

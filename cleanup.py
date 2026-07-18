@@ -268,6 +268,7 @@ def clean(
         confidence=confidence,
         translate_mode=translate_to_english,
         guard_level=guard_level,
+        mode=mode,
         is_retry=False,
     )
 
@@ -317,6 +318,7 @@ def clean(
             confidence=confidence2,
             translate_mode=translate_to_english,
             guard_level=guard_level,
+            mode=mode,
             is_retry=True,
         )
 

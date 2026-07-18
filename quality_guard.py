@@ -50,9 +50,23 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Thresholds
 # ---------------------------------------------------------------------------
-_WORD_RATIO_LO   = 0.75
-_WORD_RATIO_HI   = 1.25
-_EDIT_RATIO_MAX  = 0.20
+# Fast-guard bounds are calibrated per cleanup mode.
+#
+# 'raw' mode promises "transcription errors only", so its output must stay
+# close to the transcript: tight bounds.
+#
+# Rewriting modes (polished, brand_voice, prompt, note) legitimately remove
+# fillers ("yeah", "uh", "I mean"), restructure sentences, and add
+# punctuation; on short utterances a handful of edits inflates the
+# Levenshtein ratio well past 0.20. Calibrated against production logs
+# (2026-06/07, 780 polished dictations): every false fallback clustered at
+# edit_ratio 0.21-0.40 with word_ratio >= 0.72, while genuine failures
+# (hallucinated rewrites, dropped clauses, near-empty output) sat at
+# edit_ratio >= 0.47 or word_ratio < 0.55.
+_BOUNDS_TIGHT   = (0.75, 1.25, 0.20)   # (word_lo, word_hi, edit_max)
+_BOUNDS_REWRITE = (0.60, 1.60, 0.40)
+_TIGHT_MODES    = {"raw"}
+
 _SEM_THRESHOLD   = 0.90   # same-language
 _SEM_TRANSLATE   = 0.82   # cross-script translation
 
@@ -177,22 +191,30 @@ def check(
     translate_mode: bool = False,
     guard_level: str = "fast",
     *,
+    mode: str = "",
     is_retry: bool = False,
 ) -> GuardResult:
     """Run guard stack and return a GuardResult.
 
-    Pass is_retry=True on the second call so the loop does not cycle again.
+    *mode* is the cleanup mode ('polished', 'raw', ...); it selects the
+    fast-guard bounds ('raw' keeps the tight transcription-errors-only
+    bounds, every rewriting mode gets the looser calibration). Pass
+    is_retry=True on the second call so the loop does not cycle again.
     """
     word_ratio = None
     edit_r = None
     sem = None
+
+    word_lo, word_hi, edit_max = (
+        _BOUNDS_TIGHT if mode in _TIGHT_MODES else _BOUNDS_REWRITE
+    )
 
     if not translate_mode:
         # Fast guards
         word_ratio = _word_ratio(raw, cleaned)
         edit_r = _edit_ratio(raw, cleaned)
 
-        if not (_WORD_RATIO_LO <= word_ratio <= _WORD_RATIO_HI):
+        if not (word_lo <= word_ratio <= word_hi):
             return GuardResult(
                 accepted=False,
                 reask=not is_retry,
@@ -202,7 +224,7 @@ def check(
                 confidence=confidence,
             )
 
-        if edit_r > _EDIT_RATIO_MAX:
+        if edit_r > edit_max:
             return GuardResult(
                 accepted=False,
                 reask=not is_retry,
