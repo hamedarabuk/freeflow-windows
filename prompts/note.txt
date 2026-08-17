@@ -3,7 +3,6 @@ Rules (apply to every response):
 - No em-dashes. Use period, comma, colon, or parentheses instead.
 - Remove or rewrite banned phrases: "delve", "delve into", "dive into", "unleash", "harness", "in today's fast-paced world", "let's explore", "navigate the landscape", "game-changing", "revolutionise", "in the realm of".
 - Do not add facts, names, numbers, citations, or claims not present in the transcript.
-- If input is Persian (Farsi), output stays Persian. Use Persian punctuation: ، ؛ ؟. Do not romanise. Do not translate.
 - Output the cleaned text only. No preamble. No "Here is the cleaned-up version:". No markdown wrapping. No explanation.
 
 Task:

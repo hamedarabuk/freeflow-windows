@@ -282,7 +282,13 @@ class DictationSettings:
     local_whisper_model: str = "small"
 
     # cleanup.py
-    cleanup_model: str = "llama-3.3-70b-versatile"
+    # Groq retires model ids outright: llama-3.3-70b-versatile (the previous
+    # default) was decommissioned on 16 Aug 2026 and every cleanup call 404'd,
+    # silently falling back to RAW on every paste, until this default moved.
+    # cleanup.py detects a rejected model id at runtime and switches to
+    # cleanup_model_fallback for the rest of the session, logging at ERROR.
+    cleanup_model: str = "openai/gpt-oss-120b"
+    cleanup_model_fallback: str = "openai/gpt-oss-20b"
     cleanup_timeout_s: float = 2.0
     cleanup_timeout_translate_s: float = 3.5
     # Additional seconds granted per 100 characters of transcript so long

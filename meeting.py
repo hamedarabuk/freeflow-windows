@@ -27,6 +27,7 @@ from typing import Callable, Optional
 import requests
 import sounddevice as sd
 
+import cleanup
 from paths import user_data_dir
 from settings import settings
 from transcribe import transcribe
@@ -229,14 +230,18 @@ class MeetingRecorder:
 def summarise_transcript(text: str, api_key: str) -> str:
     """Summarise a meeting transcript via the Groq chat model. Returns ""
     on any failure (network, HTTP, or parse error)."""
+    # Shares cleanup.py's model selection so a model retirement detected on
+    # the dictation path benefits meeting summaries in the same session.
+    model = cleanup.active_model()
     payload = {
-        "model": settings.cleanup_model,
+        "model": model,
         "temperature": 0.2,
-        "max_tokens": 1024,
+        "max_tokens": 2048,
         "messages": [
             {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
             {"role": "user", "content": text},
         ],
+        **cleanup.model_params(model),
     }
     try:
         response = requests.post(

@@ -4,6 +4,19 @@ All notable changes to FreeFlow are documented here.
 
 ---
 
+## [2.2.1] (17 August 2026)
+
+### Fixed
+
+- Every dictation silently fell back to RAW from 16 August 2026: Groq retired the `llama-3.3-70b-versatile` model that cleanup relied on, so every cleanup call returned 404 and the app pasted the raw transcript with the RAW badge lit. The default cleanup model is now `openai/gpt-oss-120b` (faster in measurement: 0.4-0.7s per cleanup against the old model's typical 1-2s).
+- Translate mode returned the original language instead of English on the new model. Root cause was a latent contradiction, not the model: every mode prompt contained "Do not translate" whilst translate mode appended "translate into British English" to the same prompt. The old model happened to favour the suffix; the new one obeys the prohibition. The keep-language rule now only enters the prompt when translate is off, so the contradiction can no longer be composed.
+
+### Added
+
+- Model-retirement resilience: if the configured cleanup model is ever rejected by the API again (retired or renamed id), FreeFlow logs one ERROR naming the fix and switches to a fallback model (`openai/gpt-oss-20b`, configurable as `cleanup_model_fallback` in settings.json) for the rest of the session, instead of silently degrading every paste to RAW. Meeting summaries share the same model selection.
+
+---
+
 ## [2.2.0] (14 July 2026)
 
 ### Added

@@ -1,5 +1,5 @@
 """
-cleanup.py — Groq llama-3.3-70b-versatile text cleanup.
+cleanup.py — Groq chat-model text cleanup (model set by settings.cleanup_model).
 
 Loads the system prompt from prompts/{mode}.txt.
 Timeout 2.0s (3.5s when translate_to_english is on, because translation
@@ -33,10 +33,94 @@ import quality_guard
 
 GROQ_CHAT_URL     = "https://api.groq.com/openai/v1/chat/completions"
 MODEL             = settings.cleanup_model
+FALLBACK_MODEL    = settings.cleanup_model_fallback
 TEMPERATURE       = 0.2
-MAX_TOKENS        = 1024
+# Cap on COMPLETION tokens. gpt-oss models spend part of this budget on
+# hidden reasoning tokens even at reasoning_effort "low", so the cap carries
+# headroom above the longest plausible cleaned dictation.
+MAX_TOKENS        = 2048
 TIMEOUT_S         = settings.cleanup_timeout_s
 TIMEOUT_TRANSLATE = settings.cleanup_timeout_translate_s
+
+# Flipped to True for the rest of the session the first time the API rejects
+# the configured model id (Groq retires ids outright: llama-3.3-70b-versatile
+# 404'd from 16 Aug 2026 and every paste silently fell back to RAW until the
+# default moved). With the flag set, calls go straight to FALLBACK_MODEL
+# instead of paying a doomed round-trip on every dictation.
+_model_unavailable = False
+
+
+def active_model() -> str:
+    """The model id requests should use right now (primary, or the fallback
+    once the primary has been rejected this session)."""
+    return FALLBACK_MODEL if _model_unavailable else MODEL
+
+
+def model_params(model: str) -> dict:
+    """Per-model request extras. gpt-oss models are reasoning models; without
+    an explicit low effort they burn latency (and completion budget) on hidden
+    reasoning, which a two-second cleanup timeout cannot afford."""
+    if model.startswith("openai/gpt-oss"):
+        return {"reasoning_effort": "low"}
+    return {}
+
+
+def _is_model_rejected(exc: Exception) -> bool:
+    """True when the API rejected the MODEL ID itself (retired, renamed, or
+    inaccessible), as opposed to a network failure or transient server error.
+    Groq answers 404 model_not_found for unknown ids and 400
+    model_decommissioned for retired ones."""
+    resp = getattr(exc, "response", None)
+    if resp is None or resp.status_code not in (400, 404):
+        return False
+    if resp.status_code == 404:
+        return True
+    try:
+        err = resp.json().get("error", {})
+        text = (str(err.get("code", "")) + " " + str(err.get("message", ""))).lower()
+    except Exception:
+        return False
+    return "model" in text or "decommission" in text
+
+
+def _post_chat(base_payload: dict, api_key: str, timeout: float) -> dict:
+    """POST to Groq chat completions with automatic model-retirement fallback.
+
+    *base_payload* carries everything except the model id. On the first
+    model-id rejection of the session, logs at ERROR (naming the real fix)
+    and retries once on FALLBACK_MODEL; subsequent calls skip the primary.
+    Any other failure propagates to the caller unchanged.
+    """
+    global _model_unavailable
+
+    def _send(model: str) -> dict:
+        payload = dict(base_payload, model=model, **model_params(model))
+        response = requests.post(
+            GROQ_CHAT_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            data=json.dumps(payload),
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    model = active_model()
+    try:
+        return _send(model)
+    except requests.HTTPError as exc:
+        if model == FALLBACK_MODEL or not _is_model_rejected(exc):
+            raise
+        _model_unavailable = True
+        log.error(
+            "Cleanup model %r rejected by the API (%s): likely retired or "
+            "renamed. Using %r for the rest of this session. Fix: update "
+            "cleanup_model in settings.json (or ship a new default).",
+            model, exc, FALLBACK_MODEL,
+        )
+        return _send(FALLBACK_MODEL)
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
@@ -72,6 +156,15 @@ _RETRY_SUFFIX = (
     "This time make ONLY the minimum necessary corrections: fix clear ASR errors, "
     "remove filler words, and add sentence boundaries. Do NOT rephrase, restructure, "
     "or add any content not present in the raw transcript."
+)
+
+# Appended to the system prompt ONLY when translate mode is OFF. This rule
+# used to live in every prompts/*.txt file; it moved here so it can never
+# appear in the same prompt as TRANSLATE_SUFFIX, which it contradicts.
+KEEP_LANGUAGE_RULE = (
+    "\n"
+    "- If input is Persian (Farsi), output stays Persian. Use Persian "
+    "punctuation: ، ؛ ؟. Do not romanise. Do not translate.\n"
 )
 
 TRANSLATE_SUFFIX = (
@@ -150,7 +243,6 @@ def _call_groq(
     Raises on any network/API/parse error.
     """
     payload = {
-        "model": MODEL,
         "temperature": TEMPERATURE,
         "max_tokens": MAX_TOKENS,
         "response_format": {"type": "json_object"},
@@ -159,17 +251,8 @@ def _call_groq(
             {"role": "user",   "content": wrapped},
         ],
     }
-    response = requests.post(
-        GROQ_CHAT_URL,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        data=json.dumps(payload),
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    raw_content: str = response.json()["choices"][0]["message"]["content"].strip()
+    data = _post_chat(payload, api_key, timeout)
+    raw_content: str = data["choices"][0]["message"]["content"].strip()
 
     # Parse JSON defensively.
     try:
@@ -226,11 +309,18 @@ def clean(
 
     guard_level = settings.quality_guard_level
 
-    system_prompt = REWRITER_GUARD + _load_prompt(mode) + _JSON_SCHEMA
+    # KEEP_LANGUAGE_RULE and TRANSLATE_SUFFIX are mutually exclusive BY
+    # CONSTRUCTION. The keep-Persian rule used to live inside every
+    # prompts/*.txt file, where it directly contradicted TRANSLATE_SUFFIX;
+    # llama-3.3 happened to resolve that contradiction in favour of the
+    # suffix, gpt-oss resolves it in favour of the explicit "Do not
+    # translate", which silently broke translate mode (caught 2026-08-17).
     if translate_to_english:
-        system_prompt = system_prompt + TRANSLATE_SUFFIX
-    elif settings.codeswitching_preserve and settings.codeswitching_prompt:
-        system_prompt = system_prompt + "\n\n" + settings.codeswitching_prompt
+        system_prompt = REWRITER_GUARD + _load_prompt(mode) + _JSON_SCHEMA + TRANSLATE_SUFFIX
+    else:
+        system_prompt = REWRITER_GUARD + _load_prompt(mode) + KEEP_LANGUAGE_RULE + _JSON_SCHEMA
+        if settings.codeswitching_preserve and settings.codeswitching_prompt:
+            system_prompt = system_prompt + "\n\n" + settings.codeswitching_prompt
 
     base_timeout = TIMEOUT_TRANSLATE if translate_to_english else TIMEOUT_S
     extra = (len(transcript) / 100) * settings.cleanup_timeout_per_100_chars_s
@@ -383,7 +473,6 @@ def edit_text(selection: str, instruction: str, api_key: str) -> Optional[str]:
     timeout = TIMEOUT_S + extra
 
     payload = {
-        "model": MODEL,
         "temperature": 0.1,
         "max_tokens": MAX_TOKENS,
         "messages": [
@@ -393,17 +482,8 @@ def edit_text(selection: str, instruction: str, api_key: str) -> Optional[str]:
         ],
     }
     try:
-        response = requests.post(
-            GROQ_CHAT_URL,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            data=json.dumps(payload),
-            timeout=timeout,
-        )
-        response.raise_for_status()
-        edited = response.json()["choices"][0]["message"]["content"].strip()
+        data = _post_chat(payload, api_key, timeout)
+        edited = data["choices"][0]["message"]["content"].strip()
     except Exception as exc:
         log.warning("edit_text failed (%s), leaving selection untouched", exc)
         return None
