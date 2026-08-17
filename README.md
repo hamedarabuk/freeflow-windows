@@ -1,6 +1,6 @@
 # FreeFlow for Windows
 
-Hold-to-talk dictation for Windows 11 with sub-second cleanup. Built on Groq Whisper plus llama-3.3-70b.
+Hold-to-talk dictation for Windows 11 with sub-second cleanup. Built on Groq Whisper plus gpt-oss-120b.
 
 ---
 
@@ -14,7 +14,7 @@ Five cleanup modes pick automatically per app: polished by default, brand voice 
 
 ## Why it is fast
 
-Most AI dictation tools pipe transcripts through Claude or GPT-4 for cleanup, which adds three to eight seconds of round-trip latency. FreeFlow uses Groq's sub-second inference instead: Whisper-large-v3 for transcription and llama-3.3-70b-versatile for cleanup. Total round-trip stays under two seconds for short bursts. The cleanup falls back to the raw transcript if Groq is slow, so the dictation never blocks longer than its timeout.
+Most AI dictation tools pipe transcripts through Claude or GPT-4 for cleanup, which adds three to eight seconds of round-trip latency. FreeFlow uses Groq's sub-second inference instead: Whisper-large-v3 for transcription and openai/gpt-oss-120b for cleanup. Total round-trip stays under two seconds for short bursts. The cleanup falls back to the raw transcript if Groq is slow, so the dictation never blocks longer than its timeout.
 
 ---
 
@@ -155,7 +155,7 @@ Use `pythonw.exe` (not `python.exe`) to avoid a console window. The service auto
 ## Cost estimate
 
 - Groq Whisper (whisper-large-v3): about $0.004 per minute of audio.
-- Groq llama-3.3-70b-versatile cleanup: about $0.006 per cleanup call.
+- Groq gpt-oss-120b cleanup: well under a cent per cleanup call.
 - Typical light use (50 dictations per day, 20 seconds each): roughly $0.01 to $0.05 per day.
 
 ---
