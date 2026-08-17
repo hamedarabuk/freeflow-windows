@@ -21,4 +21,12 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
       - name: Run tests
+        timeout-minutes: 5
+        env:
+          # Importing main/config at test-collection time looks for a Groq
+          # key and, finding none, opens the first-run Tkinter key dialog,
+          # which waits forever on a runner (first CI run hung 15 minutes at
+          # "no tests ran"). A dummy key satisfies the lookup; every test
+          # mocks its HTTP, so nothing real is ever called.
+          GROQ_API_KEY: gsk_ci_dummy_key_never_used
         run: python -m pytest tests/ --ignore=tests/eval -q
