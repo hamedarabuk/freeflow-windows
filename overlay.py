@@ -213,6 +213,12 @@ class Overlay:
         self._latency_shown_at: Optional[float] = None
         self._paused = False
         self._last_fallback = False  # True when the last dispatch used the raw transcript
+        # Non-None when cleanup has failed repeatedly (set by main.py once
+        # consecutive fallbacks cross the threshold). Holds the reason string.
+        # Escalates the RAW badge to a persistent amber state whose click
+        # shows the reason, so degradation is diagnosable from the gadget
+        # instead of only visible in the log.
+        self._degraded_reason: Optional[str] = None
         self._menu_top: Optional[ctk.CTkToplevel] = None
 
         self._drag_start_x = 0
@@ -298,6 +304,17 @@ class Overlay:
         successful dispatch.
         """
         self._last_fallback = fallback
+        if self._root:
+            self._root.after(0, self._refresh)
+
+    def set_degraded(self, reason: Optional[str]) -> None:
+        """Escalate (or clear) the persistent degraded-cleanup state.
+
+        *reason* non-None: the RAW badge stays visible in amber regardless of
+        the per-dispatch fallback flag, and clicking it shows the reason.
+        None: back to the normal per-dispatch badge behaviour.
+        """
+        self._degraded_reason = reason
         if self._root:
             self._root.after(0, self._refresh)
 
@@ -490,6 +507,10 @@ class Overlay:
             corner_radius=6,
             width=32, height=16,
         )  # packed/forgotten by _refresh
+        # Clickable when degraded: shows the last cleanup error, so repeated
+        # failure is diagnosable from the gadget rather than only the log.
+        self._fallback_badge.bind("<Button-1>", self._on_fallback_badge_clicked)
+        self._fallback_badge._canvas.bind("<Button-1>", self._on_fallback_badge_clicked)
 
         # Drag on the grip bar (primary) + other non-interactive children
         # (NOT on the mode pill, pause icon, or translate badge).
@@ -637,9 +658,26 @@ class Overlay:
             if self._translate_badge.winfo_ismapped():
                 self._translate_badge.pack_forget()
 
+        # Degraded state escalation: repeated fallbacks keep the badge up in
+        # amber regardless of the per-dispatch flag, and give it a click
+        # cursor. A single fallback keeps the original purple flash.
+        degraded = self._degraded_reason is not None
+        self._fallback_badge.configure(
+            text="RAW !" if degraded else "RAW",
+            fg_color="#b45309" if degraded else "#7c3aed",
+            text_color="#fef3c7" if degraded else "#ede9fe",
+        )
+        try:
+            self._fallback_badge._canvas.configure(
+                cursor="hand2" if degraded else "arrow"
+            )
+        except Exception:
+            pass
+
         # Fallback badge: visible when the last dispatch used the raw
-        # transcript (compact mode hides it regardless).
-        if expanded and self._last_fallback:
+        # transcript OR the degraded state is latched (compact mode hides it
+        # regardless).
+        if expanded and (self._last_fallback or self._degraded_reason is not None):
             if not self._fallback_badge.winfo_ismapped():
                 self._fallback_badge.pack(side="right", padx=(0, 4))
         else:
@@ -960,6 +998,21 @@ class Overlay:
             return
         self._on_cycle_language()
         self._refresh()
+
+    def _on_fallback_badge_clicked(self, event=None) -> None:
+        """Show the degradation reason. Only active whilst degraded: a
+        one-off RAW flash is informational and carries no stored cause."""
+        if self._degraded_reason is None:
+            return
+        try:
+            from tkinter import messagebox
+            messagebox.showwarning(
+                "FreeFlow cleanup degraded",
+                self._degraded_reason,
+                parent=self._root,
+            )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Drag

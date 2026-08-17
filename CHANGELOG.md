@@ -4,6 +4,19 @@ All notable changes to FreeFlow are documented here.
 
 ---
 
+## [2.2.2] (unreleased)
+
+### Added
+
+- Loud degradation: three consecutive cleanup fallbacks latch the gadget's RAW badge into a persistent amber "RAW !" state; clicking it shows the actual error. One un-throttled toast announces the episode. A single successful cleanup clears it. (The August model retirement ran ~30 hours of silent RAW fallbacks; a throttled toast and a transient badge were the only signals.)
+- Startup self-check: a tiny cleanup call at launch discovers a dead or retired model before the first dictation, switches to the fallback model if needed, and says so in a toast.
+- Tray "Copy recent dictation": today's last dictations, click to copy back to the clipboard. Rescue path for a paste that landed in the wrong window or was overwritten.
+- Tray "Always route last app": one click makes the most recent dictation's app always use a chosen mode. Fixes "it picked the wrong mode in this app" without editing settings.json.
+- pynput bundled in the packaged build, so the no-admin input backend can be trialled with `"input_backend": "pynput"` in settings.json alone. Default backend unchanged.
+- CI: the test suite now runs on GitHub Actions for every push and pull request.
+
+---
+
 ## [2.2.1] (17 August 2026)
 
 ### Fixed

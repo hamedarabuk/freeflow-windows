@@ -49,6 +49,45 @@ TIMEOUT_TRANSLATE = settings.cleanup_timeout_translate_s
 # instead of paying a doomed round-trip on every dictation.
 _model_unavailable = False
 
+# Last cleanup failure, shown by the overlay when the degraded badge is
+# clicked. Written on every API failure and guard rejection; never cleared
+# (the UI only surfaces it whilst degraded, so staleness cannot mislead).
+_last_error: str = ""
+
+
+def get_last_error() -> str:
+    return _last_error
+
+
+def _set_last_error(detail: str) -> None:
+    global _last_error
+    _last_error = detail
+
+
+def startup_selfcheck(api_key: str) -> tuple[bool, str]:
+    """Tiny live chat call at launch so a dead cleanup model is discovered
+    before the first dictation, not by it. Rides _post_chat, so a retired
+    primary flips to the fallback model here, at startup, with the switch
+    logged. Returns (reachable, detail): detail is non-empty when something
+    needs surfacing (primary rejected, or the endpoint unreachable)."""
+    payload = {
+        "temperature": 0.0,
+        "max_tokens": 16,
+        "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
+    }
+    try:
+        _post_chat(payload, api_key, timeout=10.0)
+    except Exception as exc:
+        _set_last_error(f"Startup self-check failed: {exc}")
+        return False, str(exc)
+    if _model_unavailable:
+        return True, (
+            f"Cleanup model {MODEL} was rejected at startup; running on the "
+            f"fallback model {FALLBACK_MODEL}. Dictation works, but update "
+            "cleanup_model in settings.json (or install the latest FreeFlow)."
+        )
+    return True, ""
+
 
 def active_model() -> str:
     """The model id requests should use right now (primary, or the fallback
@@ -335,6 +374,7 @@ def clean(
         cleaned, changes, confidence = _call_groq(system_prompt, wrapped, api_key, timeout)
     except Exception as exc:
         log.warning("Cleanup failed (%s), using raw transcript", exc)
+        _set_last_error(f"Cleanup call failed: {exc}")
         # Audit finding #5: return raw for ALL lengths (not empty for >120 chars).
         chosen = transcript.strip()
         quality_guard.log_async(
@@ -390,6 +430,7 @@ def clean(
             cleaned2, changes2, confidence2 = _call_groq(retry_prompt, wrapped, api_key, timeout)
         except Exception as exc:
             log.warning("Cleanup retry failed (%s), using raw transcript", exc)
+            _set_last_error(f"Cleanup retry failed: {exc}")
             quality_guard.log_async(
                 mode=mode,
                 translate=translate_to_english,
@@ -430,6 +471,9 @@ def clean(
             "quality_guard rejected retry too (guard=%s); falling back to raw",
             guard_result2.failed_guard,
         )
+        _set_last_error(
+            f"Quality guard rejected both cleanup attempts ({guard_result2.failed_guard})"
+        )
         quality_guard.log_async(
             mode=mode,
             translate=translate_to_english,
@@ -444,6 +488,9 @@ def clean(
 
     # guard_result.reask is False (immediate hard-fail, should not normally
     # happen on is_retry=False, but be safe).
+    _set_last_error(
+        f"Quality guard hard-rejected the cleanup ({guard_result.failed_guard})"
+    )
     quality_guard.log_async(
         mode=mode,
         translate=translate_to_english,

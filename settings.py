@@ -616,6 +616,32 @@ def set_dictation_language(lang: str) -> None:
     log.info("dictation_language set to %r", lang)
 
 
+def add_router_rule(process_name: str, mode: str) -> None:
+    """Prepend a process->mode routing rule and persist the full rule list.
+
+    Prepended because router.pick_mode is first-match-wins: the user's
+    explicit choice must beat the shipped defaults. Persisting router_rules
+    snapshots the current defaults into settings.json (documented behaviour:
+    a settings.json router_rules list overrides the defaults wholesale).
+    An existing rule for the same process is replaced, not duplicated.
+    """
+    process_name = process_name.strip().lower()
+    if not process_name:
+        return
+    new_rule = {"match": "process", "pattern": process_name, "mode": mode}
+    kept = [
+        dict(r) for r in settings.router_rules
+        if not (
+            r.get("match") == "process"
+            and str(r.get("pattern", "")).lower() == process_name
+        )
+    ]
+    rules = [new_rule] + kept
+    object.__setattr__(settings, "router_rules", tuple(dict(r) for r in rules))
+    save_setting("router_rules", rules)
+    log.info("router rule added: %s -> %s", process_name, mode)
+
+
 def set_brand_name(name: str) -> None:
     """Update the live settings singleton and persist brand_name.
 

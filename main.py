@@ -52,7 +52,7 @@ migrate_legacy_user_data()
 
 from backup import backup_if_changed
 from config import load_config
-from cleanup import clean, edit_text
+from cleanup import clean, edit_text, get_last_error as cleanup_last_error, startup_selfcheck
 from dictionary import apply_substitutions
 from history import append, last_ten, log_dir
 from paste import paste_text
@@ -60,7 +60,7 @@ from meeting import MeetingRecorder, write_meeting_notes
 from recorder import Recorder
 from router import pick_mode, _get_foreground_info
 from snippets import expand_snippet
-from settings import settings, set_dictation_language
+from settings import settings, set_dictation_language, add_router_rule as settings_add_router_rule
 import transcribe as _transcribe_module
 from transcribe import transcribe
 from tray import TrayIcon
@@ -280,6 +280,52 @@ def _on_show_last() -> None:
 
 def _on_open_logs() -> None:
     os.startfile(str(log_dir()))
+
+
+def _copy_recent_dictation(text: str) -> None:
+    """Copy a past dictation to the clipboard (tray 'Copy recent dictation').
+
+    Copy, not re-paste: after a tray-menu click the foreground window is not
+    reliably the one the user means, so pasting would spray text somewhere
+    arbitrary. The clipboard puts the user in control of the destination."""
+    try:
+        pyperclip.copy(text)
+        if _tray:
+            _tray.notify("Copied to clipboard. Ctrl+V where you want it.")
+    except Exception as exc:
+        log.warning("copy recent dictation failed: %s", exc)
+
+
+def _last_dictated_app() -> str:
+    """Process name of the most recent dictation today (e.g. 'code.exe').
+
+    Read from the history log rather than the live foreground window,
+    because at tray-menu time the foreground is the taskbar, not the app
+    the user has in mind. Survives restarts for free."""
+    records = last_ten()
+    for rec in reversed(records):
+        app = (rec.get("app_process") or "").strip()
+        if app:
+            return app
+    return ""
+
+
+def _route_last_app(mode: str) -> None:
+    """Persist a routing rule: the most recent dictation's app always gets
+    *mode*. One-click fix for 'it picked the wrong mode in this app'."""
+    app = _last_dictated_app()
+    if not app:
+        if _tray:
+            _tray.notify("No dictation yet today, nothing to route.", important=True)
+        return
+    try:
+        settings_add_router_rule(app, mode)
+        if _tray:
+            _tray.notify(f"{app} will now always use {mode}.", important=True)
+    except Exception as exc:
+        log.warning("route last app failed: %s", exc)
+        if _tray:
+            _tray.notify("Could not save the routing rule; see the log.", important=True)
 
 
 def _ensure_user_config(name: str) -> Path:
@@ -1229,6 +1275,17 @@ def _stage_cleanup_and_paste(ctx: _DispatchContext) -> _Outcome:
 _FALLBACK_TOAST_INTERVAL_S = 600.0
 _last_fallback_toast_ts: float = 0.0
 
+# Degraded-cleanup escalation. The Aug 2026 model retirement ran ~30 hours
+# of silent RAW fallbacks because a throttled toast and a transient badge
+# were the only signals. At _DEGRADED_THRESHOLD consecutive cleanup
+# fallbacks the overlay badge latches persistent-amber (click shows the
+# cause) and one un-throttled toast fires. A single successful cleanup
+# clears the state; short-circuit outcomes (snippets, voice commands) say
+# nothing about cleanup health, so they leave the counter untouched.
+_DEGRADED_THRESHOLD = 3
+_consecutive_fallbacks = 0
+_degraded_announced = False
+
 # Offline-transcription toast throttle: separate timestamp from the cleanup
 # fallback above, same one-per-ten-minutes reasoning (a run of network drops
 # would otherwise spam a toast per burst).
@@ -1244,11 +1301,31 @@ def _finalise(outcome: _Outcome) -> None:
     The RAW badge is set from the outcome: the cleanup branch passes the real
     fallback flag, every short-circuit branch passes False. See the LATENT BUG
     note below."""
-    global _last_fallback_toast_ts
+    global _last_fallback_toast_ts, _consecutive_fallbacks, _degraded_announced
+
+    # Track cleanup health on genuine cleanup outcomes only.
+    if outcome.kind == "cleaned_paste":
+        if outcome.fallback_badge:
+            _consecutive_fallbacks += 1
+        else:
+            _consecutive_fallbacks = 0
+            _degraded_announced = False
+
+    degraded = _consecutive_fallbacks >= _DEGRADED_THRESHOLD
+
     if _tray:
         _tray.set_idle()
         if outcome.tray_notify:
             _tray.notify(outcome.tray_notify, important=True)
+        elif degraded and not _degraded_announced:
+            # Escalation bypasses the 10-minute throttle exactly once per
+            # degradation episode: repeated failure is news, spam is not.
+            _degraded_announced = True
+            _tray.notify(
+                f"Cleanup has failed {_consecutive_fallbacks} times in a row. "
+                "Click the amber RAW badge on the gadget for the reason.",
+                important=True,
+            )
         elif outcome.fallback_badge:
             now = time.monotonic()
             if now - _last_fallback_toast_ts >= _FALLBACK_TOAST_INTERVAL_S:
@@ -1264,6 +1341,7 @@ def _finalise(outcome: _Outcome) -> None:
         # finalise, with every short-circuit outcome carrying fallback_badge
         # False, honours that contract. The cleanup branch is unchanged.
         _overlay.set_fallback(outcome.fallback_badge)
+        _overlay.set_degraded(cleanup_last_error() if degraded else None)
         _overlay.set_state(_post_dispatch_state())
 
 
@@ -1641,6 +1719,10 @@ def main() -> None:
         get_meeting_active=lambda: _meeting_active,
         on_compact_toggle=_on_compact_toggle,
         get_compact=lambda: _overlay.get_compact() if _overlay else False,
+        get_recent=last_ten,
+        on_copy_recent=_copy_recent_dictation,
+        get_last_app=_last_dictated_app,
+        on_route_last_app=_route_last_app,
     )
     _tray.start()
 
@@ -1673,6 +1755,37 @@ def main() -> None:
         # untouched. Admin rights required on Windows.
         keyboard.on_press_key(settings.hotkey, _on_alt1_press, suppress=True)
         keyboard.on_release_key(settings.hotkey, _on_alt1_release, suppress=True)
+
+    # Startup self-check in a daemon thread: a dead or retired cleanup model
+    # is discovered at launch, before the first dictation. A rejected primary
+    # already switches to the fallback model inside cleanup; here we only
+    # surface the news. Delayed a few seconds so the tray icon exists and a
+    # slow network cannot hold up startup.
+    def _cleanup_selfcheck() -> None:
+        time.sleep(3.0)
+        try:
+            ok, detail = startup_selfcheck(_cfg.groq_api_key)
+        except Exception as exc:  # never let the check take the app down
+            log.warning("Startup self-check crashed: %s", exc)
+            return
+        if not ok:
+            log.error("Startup self-check: cleanup endpoint unreachable: %s", detail)
+            if _tray:
+                _tray.notify(
+                    "Cleanup service unreachable at startup. Dictation will "
+                    "paste raw transcripts until it recovers.",
+                    important=True,
+                )
+        elif detail:
+            log.error("Startup self-check: %s", detail)
+            if _tray:
+                _tray.notify(detail, important=True)
+        else:
+            # Logged so a healthy check is distinguishable from a check that
+            # never ran: silence must never be the success signal.
+            log.info("Startup cleanup self-check passed.")
+
+    threading.Thread(target=_cleanup_selfcheck, daemon=True).start()
 
     log.info(
         "FreeFlow dictation running. Alt+1 = hold-to-talk. "

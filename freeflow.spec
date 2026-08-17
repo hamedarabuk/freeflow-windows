@@ -51,6 +51,12 @@ a = Analysis(
         'win32api',
         'win32con',
         'win32gui',
+        # pynput is imported lazily (only when input_backend == "pynput"), so
+        # Analysis cannot trace it. Bundled so the no-admin backend can be
+        # trialled with a settings.json flip alone, no reinstall needed.
+        'pynput',
+        'pynput.keyboard._win32',
+        'pynput.mouse._win32',
     ],
     # Local hooks/ overrides the broken pyinstaller-hooks-contrib webrtcvad
     # hook (see hooks/hook-webrtcvad.py). This re-enables session mode in the

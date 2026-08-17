@@ -57,6 +57,10 @@ class TrayIcon:
         get_meeting_active: Optional[Callable[[], bool]] = None,
         on_compact_toggle: Optional[Callable[[], None]] = None,
         get_compact: Optional[Callable[[], bool]] = None,
+        get_recent: Optional[Callable[[], list]] = None,
+        on_copy_recent: Optional[Callable[[str], None]] = None,
+        get_last_app: Optional[Callable[[], str]] = None,
+        on_route_last_app: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._on_pause_toggle = on_pause_toggle
         self._on_force_mode = on_force_mode
@@ -74,6 +78,10 @@ class TrayIcon:
         self._get_meeting_active = get_meeting_active or (lambda: False)
         self._on_compact_toggle = on_compact_toggle
         self._get_compact = get_compact or (lambda: False)
+        self._get_recent = get_recent
+        self._on_copy_recent = on_copy_recent
+        self._get_last_app = get_last_app
+        self._on_route_last_app = on_route_last_app
         self._paused = False
         self._icon: Optional[pystray.Icon] = None
         self._lock = threading.Lock()
@@ -118,6 +126,28 @@ class TrayIcon:
             )
             items.append(pystray.Menu.SEPARATOR)
         items.extend(mode_items)
+        # "Always use <mode> for the last dictated app": one-click routing
+        # rule capture. Built dynamically (pystray re-evaluates a callable
+        # menu on every open) so the label always names the actual last app.
+        # The LAST DICTATED app is used, not the current foreground app,
+        # because at tray-menu-click time the foreground is the taskbar.
+        if self._on_route_last_app is not None and self._get_last_app is not None:
+            def _route_items():
+                try:
+                    app = (self._get_last_app() or "").strip()
+                except Exception:
+                    app = ""
+                if not app:
+                    yield pystray.MenuItem("(no dictation yet)", None, enabled=False)
+                    return
+                for m in self.MODES:
+                    yield pystray.MenuItem(
+                        f"{app}  ->  {m}",
+                        lambda _, m=m: self._on_route_last_app(m),
+                    )
+            items.append(
+                pystray.MenuItem("Always route last app", pystray.Menu(_route_items))
+            )
         items.append(pystray.Menu.SEPARATOR)
         if self._on_set_language is not None:
             lang_items = [
@@ -162,6 +192,33 @@ class TrayIcon:
                     "Undo last paste",
                     lambda _: self._on_undo_paste(),
                 )
+            )
+        # "Copy recent dictation": rescue path for a paste that landed in the
+        # wrong window or was overwritten. Copies to the clipboard rather
+        # than re-pasting, because after a tray-menu click the foreground
+        # window is not reliably the one the user means.
+        if self._get_recent is not None and self._on_copy_recent is not None:
+            def _recent_items():
+                try:
+                    records = list(self._get_recent())
+                except Exception:
+                    records = []
+                texts = []
+                for rec in records:
+                    text = (rec.get("transcript_clean") or rec.get("transcript_raw") or "").strip()
+                    if text:
+                        texts.append(text)
+                if not texts:
+                    yield pystray.MenuItem("(nothing yet today)", None, enabled=False)
+                    return
+                for text in reversed(texts[-8:]):
+                    label = text if len(text) <= 50 else text[:47] + "..."
+                    yield pystray.MenuItem(
+                        label,
+                        lambda _, t=text: self._on_copy_recent(t),
+                    )
+            items.append(
+                pystray.MenuItem("Copy recent dictation", pystray.Menu(_recent_items))
             )
         items.extend([
             pystray.MenuItem("Show last 10", lambda _: self._on_show_last()),

@@ -59,6 +59,9 @@ A system tray icon appears and a small floating gadget sits at the bottom-right 
 | Drag the grip bar (top of gadget) | Move the gadget. Position is remembered across restarts. |
 | Right-click the gadget | Open the mode dropdown. |
 | Click the pause icon | Pause / resume dictation. |
+| Tray > Copy recent dictation | Click one of today's dictations to copy it back to the clipboard. |
+| Tray > Always route last app | Make the app you just dictated into always use a chosen mode. |
+| Click the amber RAW badge | Shown after repeated cleanup failures; click for the reason. |
 
 The floating gadget shows: a state LED (idle / recording / processing / paused / session), a live audio equaliser whilst recording, a language pill with the last detected input language (EN, FA, FR, etc.), and the current mode. Whilst cleanup is processing, the state label grows a live elapsed-time suffix (e.g. "Processing 1.4s") once the wait passes one second, so a slow round-trip never looks frozen.
 
