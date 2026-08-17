@@ -1,5 +1,5 @@
 {
-  "version": "2.2.0",
-  "url": "https://github.com/hamedarabuk/freeflow-windows/releases/download/v2.2.0/FreeFlow-Setup.exe",
-  "notes": "FreeFlow v2.2.0: hotkey leak fix (no more stray characters while dictating), compact gadget mode, Esc to cancel a recording, brand name in first-run setup."
+  "version": "2.2.1",
+  "url": "https://github.com/hamedarabuk/freeflow-windows/releases/download/v2.2.1/FreeFlow-Setup.exe",
+  "notes": "FreeFlow v2.2.1: urgent cleanup fix. Groq retired the previous AI model, so every dictation silently pasted raw text. New faster model, translate-mode fix, and automatic fallback if a model is ever retired again."
 }
